@@ -1,0 +1,22 @@
+{
+  "project_short": "Glint",
+  "language": "en",
+  "recommended_option": 1,
+  "options": [
+    {
+      "text": "Glint makes this upgrade immediately useful for builders",
+      "reply_probability": 72,
+      "stars": 4
+    },
+    {
+      "text": "Glint keeps shipping while most timelines chase narratives",
+      "reply_probability": 61,
+      "stars": 3
+    },
+    {
+      "text": "The Glint thesis looks stronger with real usage data",
+      "reply_probability": 55,
+      "stars": 3
+    }
+  ]
+}

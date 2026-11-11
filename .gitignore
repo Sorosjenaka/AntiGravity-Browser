@@ -1,0 +1,16 @@
+/target/
+/history.sqlite3
+/history.sqlite3-shm
+/history.sqlite3-wal
+/browser_config.json
+/shortcuts/
+*.lnk
+/data/*.txt
+/data/*.json
+!/data/*.example.json
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+scratch/
+*.log
