@@ -3,6 +3,7 @@ import asyncio
 import configparser
 import json
 import os
+import random
 import re
 import shutil
 import socket
@@ -75,6 +76,50 @@ def hidden_popen_kwargs() -> dict:
         "startupinfo": si,
         "creationflags": subprocess.CREATE_NO_WINDOW,
     }
+
+
+_RNG = random.SystemRandom()
+
+
+def compute_random_delay(
+    min_sec: float = 5.0,
+    max_sec: float = 60.0,
+    prev_delay: float | None = None,
+) -> float:
+    """
+    Human-like multi-band randomized delay algorithm strictly within [min_sec, max_sec].
+    Default range: 5.0s to 60.0s with anti-clustering against prev_delay.
+    """
+    if min_sec < 0 or max_sec < min_sec:
+        raise ValueError(f"Invalid delay range: min={min_sec}, max={max_sec}")
+    if max_sec == min_sec:
+        return round(min_sec, 2)
+
+    span = max_sec - min_sec
+    bands = [
+        (0.00, 0.25, 0.25),  # quick cadence (e.g. 5s - 18.75s)
+        (0.25, 0.65, 0.45),  # normal cadence (e.g. 18.75s - 40.75s)
+        (0.65, 1.00, 0.30),  # resting pause (e.g. 40.75s - 60s)
+    ]
+    min_gap = min(3.0, span * 0.12)
+
+    candidate = min_sec + _RNG.uniform(0.0, span)
+    for _ in range(5):
+        roll = _RNG.random()
+        acc = 0.0
+        lo, hi = 0.0, 1.0
+        for b_lo, b_hi, weight in bands:
+            acc += weight
+            if roll <= acc:
+                lo, hi = b_lo, b_hi
+                break
+        frac = _RNG.uniform(lo, hi)
+        candidate = min_sec + frac * span
+        if prev_delay is None or span <= 1.0 or abs(candidate - prev_delay) >= min_gap:
+            break
+
+    clamped = max(min_sec, min(max_sec, candidate))
+    return round(clamped, 2)
 
 
 def expand_candidate(path_tmpl: str) -> Path:

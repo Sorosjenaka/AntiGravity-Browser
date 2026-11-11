@@ -44,12 +44,20 @@ Supported browsers: `firefox` (WebDriver BiDi), `brave`, `chrome`, `edge`, or `c
 .\target\release\x-social-draft-workflow.exe show-prompt
 ```
 
-## Step 2: Read X Posts in Hidden Background
+## Step 2: Read X Posts in Hidden Background (Any Count)
+
+Accept **any number of links** supplied by the user (1, 3, 10, 25, 50+, never assume 10):
 
 ```powershell
+# Pass URLs directly (1 or several):
 python .agents/skills/x-social-browser-workflow/scripts/read_posts.py `
   --out data/observed_posts.json `
   --urls "<url1>" "<url2>" ...
+
+# Or for large lists, put 1 URL per line in data/urls.txt:
+python .agents/skills/x-social-browser-workflow/scripts/read_posts.py `
+  --out data/observed_posts.json `
+  --urls-file data/urls.txt
 ```
 
 ## Step 3: Record Posts & Validated English Drafts
@@ -68,17 +76,19 @@ For each post:
    .\target\release\x-social-draft-workflow.exe save-drafts --post-id <id> --file data/drafts_<n>.json
    ```
 
-## Step 4: Execute Verified Likes & Replies in Hidden Background
+## Step 4: Execute Verified Likes & Replies in Hidden Background (Random 5–60s Pacing)
 
-Create `data/action_plan.json` (`index`, `post_id`, `draft_id`, `status_id`, `url`, `reply_text`) and run:
+Create `data/action_plan.json` (`index`, `post_id`, `draft_id`, `status_id`, `url`, `reply_text`) for all links provided by the user, then run:
 
 ```powershell
 python -u .agents/skills/x-social-browser-workflow/scripts/engage_posts.py `
   --plan data/action_plan.json `
-  --out data/engage_results.json
+  --out data/engage_results.json `
+  --min-delay 5 `
+  --max-delay 60
 ```
 
-`engage_posts.py` auto-reads (or auto-detects) `@handle`, uses real WebDriver BiDi or Chromium CDP events, verifies `liked` + `visibleOwnReply`, and closes its tab/headless browser cleanly.
+`engage_posts.py` automatically uses the randomized `5.0–60.0`s multi-band anti-clustering delay algorithm (even if `--min-delay` / `--max-delay` are omitted), adds in-post micro-jitter, auto-reads/detects `@handle`, uses WebDriver BiDi or Chromium CDP events, verifies `liked` + `visibleOwnReply`, and closes its tab/headless browser cleanly.
 
 ## Step 5: Confirm & Print Report in Indonesian
 

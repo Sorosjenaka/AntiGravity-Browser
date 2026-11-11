@@ -38,7 +38,9 @@ When the user opens this repository or asks to install, load, or check readiness
 ## X Workflow & Reply Rules
 
 1. Activate and follow `.agents/skills/x-social-browser-workflow/SKILL.md`.
-2. Read posts via `read_posts.py` in hidden background, inspect original text (`<title>` if X auto-translated).
-3. Record each post with `add-post` and create 3 distinct English (`"language": "en"`) non-question drafts (`7–9` words, `project_short` included, no `?`/`？`, no emojis/quotes/dashes), saved via `save-drafts`.
-4. Like & reply via `engage_posts.py`, verify DOM confirmation (`liked` + `visibleOwnReply`), confirm via `confirm-posted` / `confirm-liked`, and show the `report` table in Indonesian.
-5. Never commit `history.sqlite3`, `browser_config.json`, `shortcuts/`, `target/`, `data/*.txt`, or non-example `data/*.json`.
+2. **Any number of links:** Accept however many X links the user supplies (1, 3, 10, 25, 50, or more — never assume or require 10 links). For large batches, save links into `data/urls.txt` and pass `--urls-file data/urls.txt` to `read_posts.py`.
+3. **Humanized random delay (5–60s):** `engage_posts.py` defaults to `--min-delay 5 --max-delay 60` using a multi-band randomized delay algorithm (5 seconds up to 60 seconds max between posts, plus subtle in-post micro-jitter and anti-clustering). Always let `engage_posts.py` run with this 5–60s randomized pacing unless the user explicitly asks for a different delay.
+4. Read posts via `read_posts.py` in hidden background, inspect original text (`<title>` if X auto-translated).
+5. Record each post with `add-post` and create 3 distinct English (`"language": "en"`) non-question drafts (`7–9` words, `project_short` included, no `?`/`？`, no emojis/quotes/dashes), saved via `save-drafts`.
+6. Like & reply via `engage_posts.py`, verify DOM confirmation (`liked` + `visibleOwnReply`), confirm via `confirm-posted` / `confirm-liked`, and show the `report` table in Indonesian.
+7. Never commit `history.sqlite3`, `browser_config.json`, `shortcuts/`, `target/`, `data/*.txt`, or non-example `data/*.json`.

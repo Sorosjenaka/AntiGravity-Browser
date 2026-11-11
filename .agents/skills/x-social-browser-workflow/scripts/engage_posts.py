@@ -10,6 +10,7 @@ from browser_hub import (  # noqa: E402
     DEFAULT_CLI_PATH,
     DEFAULT_CONFIG_PATH,
     agent_profiles_root,
+    compute_random_delay,
     detect_and_confirm_account,
     load_config,
     open_hidden_session,
@@ -182,6 +183,8 @@ async def engage_one(sess, item: dict, expected_handle: str):
             "reply_note": "already_replied",
         }
 
+    await asyncio.sleep(compute_random_delay(0.45, 1.35))
+
     clicked_reply = await sess.eval_js(
         f"""(() => {{
             const articles = Array.from(document.querySelectorAll('article[data-testid="tweet"]'));
@@ -217,9 +220,9 @@ async def engage_one(sess, item: dict, expected_handle: str):
         return {"index": idx, "liked": liked_verified, "replied": False, "reply_note": "no_reply_dialog"}
 
     await sess.click_point(ta_rect["x"], ta_rect["y"])
-    await asyncio.sleep(0.3)
+    await asyncio.sleep(compute_random_delay(0.25, 0.7))
     await sess.type_text(reply_text)
-    await asyncio.sleep(0.8)
+    await asyncio.sleep(compute_random_delay(0.55, 1.4))
 
     btn_info = await sess.eval_js(
         """(() => {
@@ -294,27 +297,63 @@ async def engage_one(sess, item: dict, expected_handle: str):
     }
 
 
-async def run_engage(cfg: dict, plan: list[dict], expected_handle: str, port_override: int | None, out_path: Path, delay: float):
+async def run_engage(
+    cfg: dict,
+    plan: list[dict],
+    expected_handle: str,
+    port_override: int | None,
+    out_path: Path,
+    min_delay: float = 5.0,
+    max_delay: float = 60.0,
+    fixed_delay: float | None = None,
+):
+    if not plan:
+        raise ValueError("Action plan kosong; minimal harus ada 1 link postingan X.")
+    if fixed_delay is None and (min_delay < 0 or max_delay < min_delay):
+        raise ValueError(f"Range jeda tidak valid: min={min_delay}, max={max_delay}")
+
     results = []
+    prev_delay = None
+    total = len(plan)
+    if fixed_delay is not None:
+        print(f"Memproses {total} link dengan jeda tetap {fixed_delay:.2f} detik.")
+    else:
+        print(f"Memproses {total} link dengan jeda acak {min_delay:.1f}-{max_delay:.1f} detik antar link.")
+
     sess = open_hidden_session(cfg, port_override=port_override)
     await sess.start()
     try:
         for i, item in enumerate(plan):
             res = await engage_one(sess, item, expected_handle)
+            wait_sec = 0.0
+            if i < total - 1:
+                wait_sec = (
+                    round(fixed_delay, 2)
+                    if fixed_delay is not None
+                    else compute_random_delay(min_delay, max_delay, prev_delay)
+                )
+                prev_delay = wait_sec
+                res["delay_after_sec"] = wait_sec
+            else:
+                res["delay_after_sec"] = 0.0
+
             results.append(res)
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(
                 json.dumps(results, indent=2, ensure_ascii=False),
                 encoding="utf-8",
             )
-            if i < len(plan) - 1:
-                await asyncio.sleep(delay)
+            if wait_sec > 0:
+                print(f"[{i + 1}/{total}] Jeda acak {wait_sec:.2f} detik sebelum link berikutnya...")
+                await asyncio.sleep(wait_sec)
     finally:
         await sess.close()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Like and reply on X posts via hidden background browser.")
+    parser = argparse.ArgumentParser(
+        description="Like and reply on any number of X posts via hidden background browser with randomized 5-60s pacing."
+    )
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Browser config JSON path")
     parser.add_argument("--browser", default=None, choices=["firefox", "brave", "chrome", "edge"], help="Override browser")
     parser.add_argument("--profile", default=None, help="Dedicated profile name")
@@ -326,7 +365,9 @@ def main():
     parser.add_argument("--handle", default=None, help="Override X @handle (auto-read/auto-detect if omitted)")
     parser.add_argument("--plan", default="data/action_plan.json", help="Action plan JSON path")
     parser.add_argument("--out", default="data/engage_results.json", help="Output results JSON path")
-    parser.add_argument("--delay", type=float, default=3.0, help="Delay in seconds between posts")
+    parser.add_argument("--min-delay", type=float, default=5.0, help="Min random delay in seconds between posts (default: 5.0)")
+    parser.add_argument("--max-delay", type=float, default=60.0, help="Max random delay in seconds between posts (default: 60.0)")
+    parser.add_argument("--delay", type=float, default=None, help="Optional fixed delay override in seconds (disables random 5-60s)")
     args = parser.parse_args()
 
     cfg = build_effective_config(args)
@@ -337,7 +378,18 @@ def main():
         args.port,
     )
     plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
-    asyncio.run(run_engage(cfg, plan, expected_handle, args.port, Path(args.out), args.delay))
+    asyncio.run(
+        run_engage(
+            cfg,
+            plan,
+            expected_handle,
+            args.port,
+            Path(args.out),
+            min_delay=args.min_delay,
+            max_delay=args.max_delay,
+            fixed_delay=args.delay,
+        )
+    )
 
 
 if __name__ == "__main__":
