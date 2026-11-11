@@ -11,7 +11,7 @@ from browser_hub import (  # noqa: E402
     agent_profiles_root,
     compute_random_delay,
     load_config,
-    open_hidden_session,
+    open_headless_session,
     resolve_browser_exe,
     sanitize_slug,
 )
@@ -115,7 +115,7 @@ async def read_all(
     min_delay: float = 0.8,
     max_delay: float = 2.5,
 ):
-    sess = open_hidden_session(cfg, port_override=port_override)
+    sess = open_headless_session(cfg, port_override=port_override)
     await sess.start()
     results = []
     prev_delay = None
@@ -126,7 +126,7 @@ async def read_all(
             post_data = None
             for _ in range(16):
                 await asyncio.sleep(1.0)
-                val = await sess.eval_js(EXTRACT_POST_JS)
+                val = await sess.evaluate_dom(EXTRACT_POST_JS)
                 if isinstance(val, dict) and (
                     val.get("found")
                     or val.get("emptyState")
@@ -158,7 +158,7 @@ async def read_all(
             ),
             encoding="utf-8",
         )
-        print(f"Saved {len(urls)} observations to {out_path} (port {sess.port}, hidden background)")
+        print(f"Saved {len(urls)} observations to {out_path} (port {sess.port}, headless mode)")
     finally:
         await sess.close()
 
@@ -186,7 +186,7 @@ def collect_urls(urls_arg: list[str] | None, urls_file: str | None) -> list[str]
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Read any number of X posts in hidden background browser (Firefox BiDi or Chromium CDP)."
+        description="Read any number of X posts in an isolated headless browser (Firefox BiDi or Chromium CDP)."
     )
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Browser config JSON path")
     parser.add_argument("--browser", default=None, choices=["firefox", "brave", "chrome", "edge"], help="Override browser")

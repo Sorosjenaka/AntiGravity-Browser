@@ -13,7 +13,7 @@ from browser_hub import (  # noqa: E402
     compute_random_delay,
     detect_and_confirm_account,
     load_config,
-    open_hidden_session,
+    open_headless_session,
     resolve_browser_exe,
     run_workflow_cli,
     sanitize_slug,
@@ -57,7 +57,7 @@ def resolve_account_handle(
     if handle:
         return handle
 
-    # Auto-detect active X user in hidden background and record in SQLite
+    # Detect active X user in isolated headless mode and record in SQLite
     detected = detect_and_confirm_account(
         cfg,
         cli_path=cli_path,
@@ -124,7 +124,7 @@ async def engage_one(sess, item: dict, expected_handle: str):
     state = None
     for _ in range(20):
         await asyncio.sleep(1.0)
-        state = await sess.eval_js(f"({WAIT_READY_JS})({json.dumps(status_id)})")
+        state = await sess.evaluate_dom(f"({WAIT_READY_JS})({json.dumps(status_id)})")
         if state and state.get("ready"):
             break
 
@@ -140,7 +140,7 @@ async def engage_one(sess, item: dict, expected_handle: str):
         liked_verified = True
         like_note = "already_liked"
     else:
-        await sess.eval_js(
+        await sess.evaluate_dom(
             f"""(() => {{
                 const articles = Array.from(document.querySelectorAll('article[data-testid="tweet"]'));
                 let main = articles.find(art => Array.from(art.querySelectorAll('a[href*="/status/"]')).some(a => a.getAttribute('href').includes('/status/{status_id}') && a.querySelector('time'))) || articles[0];
@@ -153,13 +153,13 @@ async def engage_one(sess, item: dict, expected_handle: str):
         )
         for _ in range(8):
             await asyncio.sleep(0.6)
-            chk = await sess.eval_js(f"({WAIT_READY_JS})({json.dumps(status_id)})")
+            chk = await sess.evaluate_dom(f"({WAIT_READY_JS})({json.dumps(status_id)})")
             if chk and chk.get("alreadyLiked"):
                 liked_verified = True
                 like_note = "liked_now"
                 break
 
-    already_replied = await sess.eval_js(
+    already_replied = await sess.evaluate_dom(
         f"""(() => {{
             const articles = Array.from(document.querySelectorAll('article[data-testid="tweet"]'));
             for (const art of articles) {{
@@ -185,7 +185,7 @@ async def engage_one(sess, item: dict, expected_handle: str):
 
     await asyncio.sleep(compute_random_delay(0.45, 1.35))
 
-    clicked_reply = await sess.eval_js(
+    clicked_reply = await sess.evaluate_dom(
         f"""(() => {{
             const articles = Array.from(document.querySelectorAll('article[data-testid="tweet"]'));
             let main = articles.find(art => Array.from(art.querySelectorAll('a[href*="/status/"]')).some(a => a.getAttribute('href').includes('/status/{status_id}') && a.querySelector('time'))) || articles[0];
@@ -202,7 +202,7 @@ async def engage_one(sess, item: dict, expected_handle: str):
     ta_rect = None
     for _ in range(12):
         await asyncio.sleep(0.5)
-        ta_rect = await sess.eval_js(
+        ta_rect = await sess.evaluate_dom(
             """(() => {
                 const dlg = document.querySelector('[role="dialog"]');
                 if (!dlg) return null;
@@ -224,7 +224,7 @@ async def engage_one(sess, item: dict, expected_handle: str):
     await sess.type_text(reply_text)
     await asyncio.sleep(compute_random_delay(0.55, 1.4))
 
-    btn_info = await sess.eval_js(
+    btn_info = await sess.evaluate_dom(
         """(() => {
             const dlg = document.querySelector('[role="dialog"]');
             if (!dlg) return { ok: false, reason: 'no_dialog' };
@@ -254,7 +254,7 @@ async def engage_one(sess, item: dict, expected_handle: str):
             "btn_info": btn_info,
         }
 
-    await sess.eval_js(
+    await sess.evaluate_dom(
         """(() => {
             const btn = document.querySelector('[role="dialog"] [data-testid="tweetButton"]');
             if (btn) btn.click();
@@ -265,7 +265,7 @@ async def engage_one(sess, item: dict, expected_handle: str):
     post_submit_state = None
     for _ in range(18):
         await asyncio.sleep(0.7)
-        post_submit_state = await sess.eval_js(
+        post_submit_state = await sess.evaluate_dom(
             f"""(() => {{
                 const dlg = document.querySelector('[role="dialog"]');
                 const toast = document.querySelector('[data-testid="toast"]')?.innerText || null;
@@ -320,7 +320,7 @@ async def run_engage(
     else:
         print(f"Memproses {total} link dengan jeda acak {min_delay:.1f}-{max_delay:.1f} detik antar link.")
 
-    sess = open_hidden_session(cfg, port_override=port_override)
+    sess = open_headless_session(cfg, port_override=port_override)
     await sess.start()
     try:
         for i, item in enumerate(plan):
@@ -352,7 +352,7 @@ async def run_engage(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Like and reply on any number of X posts via hidden background browser with randomized 5-60s pacing."
+        description="Like and reply on any number of X posts via isolated headless browser with randomized 5-60s pacing."
     )
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Browser config JSON path")
     parser.add_argument("--browser", default=None, choices=["firefox", "brave", "chrome", "edge"], help="Override browser")

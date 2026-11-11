@@ -17,7 +17,7 @@ if (-not (Test-Path $exe)) {
     cargo build --release
 }
 
-Write-Host "[1/3] Menjalankan eksekusi hidden background (jeda acak $MinDelay-$MaxDelay detik)..."
+Write-Host "[1/3] Menjalankan eksekusi headless terisolasi (jeda acak $MinDelay-$MaxDelay detik)..."
 python -u .agents/skills/x-social-browser-workflow/scripts/engage_posts.py `
     --plan $Plan `
     --out $Out `

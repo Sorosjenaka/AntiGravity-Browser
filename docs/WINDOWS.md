@@ -1,6 +1,6 @@
 # Panduan Lengkap Windows (Desktop & PowerShell)
 
-Panduan ini khusus untuk pengguna **Windows 10 / Windows 11**. Semua script berjalan 100% tersembunyi di background (`headless` + `CREATE_NO_WINDOW` + `SW_HIDE`) agar jendela browser dan pekerjaan utama kamu di Desktop tidak pernah terganggu.
+Panduan ini khusus untuk pengguna **Windows 10 / Windows 11**. Browser workspace berjalan dalam mode **headless terisolasi** (`-headless` / `--headless=new`) memakai folder profil terpisah sehingga browser kerja utama kamu di Desktop tidak pernah terganggu.
 
 > **Saran Terbaik:** Gunakan **Antigravity Desktop** atau **Antigravity CLI** (`agy`) dengan model **`Gemini 3.8 Flash`** (`Gemini 3.8Flash`).
 
@@ -10,7 +10,7 @@ Panduan ini khusus untuk pengguna **Windows 10 / Windows 11**. Semua script berj
 
 Pastikan sudah terpasang:
 1. **Git for Windows**
-2. **Rust (`cargo`)** — install via `winget install Rustlang.Rustup` atau dari `https://rustup.rs`
+2. **Rust (`cargo`)** — install lewat `winget install Rustlang.Rustup` atau dari `https://rustup.rs`
 3. **Python 3.10+** — pastikan `python --version` berjalan di PowerShell
 4. Minimal **1 browser** pilihan kamu: **Brave**, **Google Chrome**, **Microsoft Edge**, atau **Mozilla Firefox**
 
@@ -40,18 +40,18 @@ Jika ingin langsung memilih browser favorit kamu:
 .\setup.ps1 -Browser custom -ExePath "C:\Path\ke\browser.exe" -Profile Agent
 ```
 
-> **Jika PowerShell memblokir `.ps1` (*ExecutionPolicy*):** jalankan sekali:
+> **Jika PowerShell belum mengizinkan script lokal:** aktifkan kebijakan standar Microsoft untuk user saat ini:
 > ```powershell
-> powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Browser auto
+> Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 > ```
 
 Yang otomatis dikerjakan `setup.ps1`:
 - Mengetes & compile CLI Rust ke `.\target\release\x-social-draft-workflow.exe`
 - Memastikan modul Python `websockets` tersedia
 - Membuat database lokal `history.sqlite3`
-- Menghubungkan browser pilihan ke profil terisolasi (`%LOCALAPPDATA%\AntiGravity-Browser\profiles\...` untuk Chromium, atau profil `-P` untuk Firefox)
-- Membuat **Shortcut Desktop Windows (`.lnk`)** di Desktop kamu & di folder `shortcuts/`
-- Menjalankan **auto-deteksi akun X** di hidden background
+- Menghubungkan browser pilihan ke profil terisolasi (`~\AppData\Local\AntiGravity-Browser\profiles\...` untuk Chromium, atau profil `-P` untuk Firefox) dengan origin debug ketat (`http://127.0.0.1:<port>`)
+- Membuat **Shortcut Desktop Windows (`.lnk`)** langsung dengan format standar Shell Link (`MS-SHLLINK`) di Desktop & folder `shortcuts/`
+- Mendeteksi akun X aktif di mode headless
 
 ---
 
@@ -62,19 +62,19 @@ Jika pada tahap setup akun X belum terdeteksi (`"logged_in": false`):
 1. Cari shortcut baru di **Desktop Windows** kamu bernama **`AntiGravity X (<Browser> - <Profile>).lnk`**.
 2. **Klik ganda (double-click)** shortcut itu — jendela browser profil terpisah akan terbuka ke `https://x.com/home` tanpa menyentuh browser kerja utama kamu.
 3. **Login akun X** kamu sekali di jendela itu.
-4. **Tutup jendela browser tersebut** (close total agar port debug & kunci profil siap diambil alih headless mode).
-5. Jalankan ulang auto-deteksi:
+4. **Tutup jendela browser tersebut** secara penuh agar port debug & kunci profil siap dipakai mode headless.
+5. Jalankan ulang deteksi akun:
    ```powershell
    .\target\release\x-social-draft-workflow.exe auto-detect-account
    ```
 
-Sekarang `@handle` dan `display_name` kamu otomatis tercatat, dan selanjutnya agent selalu bekerja 100% di background tanpa memunculkan jendela apa pun.
+Sekarang `@handle` dan `display_name` kamu otomatis tercatat, dan selanjutnya agent berjalan dalam mode headless tanpa memunculkan jendela GUI.
 
 ---
 
 ## 4. Pakai Lewat AI Agent
 
-1. Buka folder `AntiGravity-Browser` sebagai workspace di **Antigravity Desktop / CLI** (atau Gemini CLI, Codex, Claude, Hermes, Cursor, Windsurf).
+1. Buka folder `AntiGravity-Browser` sebagai workspace di **Antigravity Desktop / CLI** (atau agent lain seperti Gemini CLI, Codex, Claude, Hermes, Cursor, Windsurf).
 2. Ketik:
    ```text
    Install, load, dan cek semua setup workspace ini sampai 100% siap kerja.
@@ -84,9 +84,9 @@ Sekarang `@handle` dan `display_name` kamu otomatis tercatat, dan selanjutnya ag
 
 ---
 
-## 5. Eksekutor Lokal Fallback (Jika Agent Dibatasi Sandbox)
+## 5. Eksekutor Lokal Fallback (Untuk Agent Mode Draf / Sandbox)
 
-Jika kamu memakai agent yang tidak diizinkan mengakses browser lokal, suruh agent membuat `data/action_plan.json`, lalu jalankan 1 perintah di PowerShell Windows:
+Jika kamu memakai agent yang hanya membuat draf atau tidak memiliki akses browser lokal, suruh agent tersebut membuat `data/action_plan.json`, lalu jalankan 1 perintah di PowerShell Windows:
 
 ```powershell
 .\run-plan.ps1
@@ -97,8 +97,8 @@ Jika kamu memakai agent yang tidak diizinkan mengakses browser lokal, suruh agen
 ## 6. Troubleshooting Singkat Windows
 
 - **Browser utama masih terbuka saat agent jalan, apakah aman?**  
-  Aman. Profil terpisah memakai `--user-data-dir` khusus atau `-no-remote -P <Profile>` di port debug otomatis (`9222–9235` atau port acak bebas). Browser kerja utama kamu tidak tersentuh.
+  Aman. Profil workspace terisolasi menggunakan `--user-data-dir` khusus atau `-no-remote -P <Profile>` di port loopback terkonfigurasi (`127.0.0.1`). Browser pribadi kamu tidak tersentuh.
 - **Error `browser headless exited early`:**  
-  Biasanya jendela login dari shortcut `.lnk` masih terbuka (mengunci folder profil tanpa port headless). Tutup dulu jendela login shortcut tersebut, lalu ulangi perintahnya.
+  Biasanya jendela login dari shortcut `.lnk` masih terbuka dan mengunci direktori profil. Tutup dulu jendela login shortcut tersebut, lalu ulangi perintahnya.
 - **Port bentrok:**  
-  `browser_hub.py` otomatis mendeteksi port aktif lewat `DevToolsActivePort` / scan `9222–9235` atau mencari port TCP localhost baru yang kosong.
+  Jika port default terpakai, engine otomatis mencari port TCP loopback `127.0.0.1` yang kosong.

@@ -229,7 +229,7 @@ fn same_status_id_is_not_added_twice_via_another_x_domain() {
 fn designating_browser_before_confirm_account_is_preserved() {
     let connection = Connection::open_in_memory().unwrap();
     initialize_schema(&connection).unwrap();
-    designate_browser(&connection, "Brave Browser hidden background (Agent)").unwrap();
+    designate_browser(&connection, "Brave Browser headless isolated (Agent)").unwrap();
     let status_before = x_social_draft_workflow::status_summary(&connection).unwrap();
     assert!(status_before.dedicated_browser_designated);
     assert!(!status_before.account_confirmed);

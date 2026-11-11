@@ -13,7 +13,7 @@ use x_social_draft_workflow::{
 #[command(
     name = "x-social-draft-workflow",
     version,
-    about = "Local X post/draft database, duplicate checker, report generator, and hidden multi-browser connector."
+    about = "Local X post/draft database, duplicate checker, report generator, and isolated headless multi-browser connector."
 )]
 struct Cli {
     #[arg(
@@ -68,7 +68,7 @@ enum Command {
     },
     /// Create or refresh Desktop shortcut/launcher (.lnk / .desktop / .command) for the connected isolated browser profile.
     CreateShortcut,
-    /// Auto-detect logged-in X handle and display name in hidden background browser and save to DB.
+    /// Auto-detect logged-in X handle and display name in isolated headless mode and save to DB.
     AutoDetectAccount {
         #[arg(long)]
         port: Option<u16>,

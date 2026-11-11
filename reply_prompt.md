@@ -8,4 +8,4 @@ Each reply must include the post's central project name in its short form: no @,
 
 Use three distinct non-question angles or observations across the options. Do not ask questions and do not use question marks, emoji, quotation marks, em dashes, or en dashes.
 
-After the three options, give each a reply-probability percentage and a 1–5 star score, and mark one recommended option. When the user requests execution on X, proceed directly with liking and posting the selected option via the hidden browser skill.
+After the three options, give each a reply-probability percentage and a 1–5 star score, and mark one recommended option. When the user requests execution on X, proceed with liking and posting the selected option via the isolated headless workflow or save `data/action_plan.json` for local execution.

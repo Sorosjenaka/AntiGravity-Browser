@@ -1,6 +1,6 @@
 # Panduan Lengkap macOS (Apple Silicon & Intel)
 
-Panduan ini khusus untuk pengguna **macOS** (MacBook / iMac / Mac Mini). Semua proses agent berjalan tersembunyi di background (`headless` + `start_new_session=True`), dengan launcher klik-ganda `.command` di Desktop Finder agar profil X tetap terisolasi dari browser harian kamu.
+Panduan ini khusus untuk pengguna **macOS** (MacBook / iMac / Mac Mini). Browser workspace berjalan terisolasi dalam mode headless (`-headless` / `--headless=new`) menggunakan direktori profil terpisah di `~/Library/Application Support/AntiGravity-Browser/profiles/` serta membuat launcher klik-ganda `.command` di Desktop Finder.
 
 > **Saran Terbaik:** Gunakan **Antigravity Desktop** atau **Antigravity CLI** (`agy`) dengan model **`Gemini 3.8 Flash`** (`Gemini 3.8Flash`).
 
@@ -56,8 +56,8 @@ Yang otomatis dilakukan `setup.sh` di macOS:
 - Membuat profil terisolasi di:
   - Chromium: `~/Library/Application Support/AntiGravity-Browser/profiles/<browser>-<profile>`
   - Firefox: `~/Library/Application Support/Firefox/` (`-no-remote -P <profile>`)
-- Membuat shortcut Finder **`~/Desktop/AntiGravity X (<Browser> - <Profile>).command`** + script cadangan `shortcuts/antigravity-x-*.sh`
-- Menjalankan **auto-deteksi user X** di hidden background
+- Membuat shortcut Finder **`~/Desktop/AntiGravity X (<Browser> - <Profile>).command`** + script `shortcuts/antigravity-x-*.sh`
+- Menjalankan deteksi user X di mode headless
 
 ---
 
@@ -66,13 +66,12 @@ Yang otomatis dilakukan `setup.sh` di macOS:
 Jika `auto-detect-account` melaporkan belum login:
 
 1. Buka Desktop Finder dan klik ganda **`AntiGravity X (<Browser> - <Profile>).command`** (atau jalankan `./shortcuts/antigravity-x-*.sh` di Terminal).
-2. Jika muncul peringatan Gatekeeper macOS untuk file `.command` baru, jalankan sekali di Terminal:
+2. Jika muncul izin Gatekeeper untuk file `.command` yang baru dibuat, jalankan dari Terminal:
    ```bash
-   chmod +x ~/Desktop/"AntiGravity X"*.command
    ./shortcuts/antigravity-x-*.sh
    ```
-3. Login ke akun X kamu sekali di jendela browser terpisah yang muncul, lalu **tutup total (Cmd+Q)** jendela browser profil agent itu.
-4. Jalankan ulang auto-deteksi:
+3. Login ke akun X kamu sekali di jendela browser terpisah yang muncul, lalu **tutup total (`Cmd+Q`)** jendela browser profil workspace itu.
+4. Jalankan ulang deteksi akun:
    ```bash
    ./target/release/x-social-draft-workflow auto-detect-account
    ```
@@ -86,13 +85,13 @@ Jika `auto-detect-account` melaporkan belum login:
    ```text
    Install, load, dan cek semua setup workspace ini sampai 100% siap kerja.
    ```
-3. Saat agent menyatakan siap kerja, **tinggal kirim daftar link X** berapa pun jumlahnya (1, 3, 10, 20, 50+). Agent bekerja tersembunyi di background dengan **jeda acak 5–60 detik** antar post tanpa mengganggu jendela Mac yang sedang kamu pakai.
+3. Saat agent menyatakan siap kerja, **tinggal kirim daftar link X** berapa pun jumlahnya (1, 3, 10, 20, 50+). Agent bekerja dalam mode headless dengan **jeda acak 5–60 detik** antar post tanpa mengganggu jendela Mac yang sedang kamu pakai.
 
 ---
 
 ## 5. Eksekutor Lokal Fallback di macOS (`run-plan.sh`)
 
-Jika memakai agent sandbox yang tidak bisa menjalankan browser lokal, suruh agent membuat `data/action_plan.json`, lalu jalankan 1 perintah di Terminal macOS:
+Jika memakai agent sandbox atau assistant yang hanya membuat draf, suruh agent menulis `data/action_plan.json`, lalu jalankan 1 perintah di Terminal macOS:
 
 ```bash
 ./run-plan.sh
@@ -102,7 +101,7 @@ Jika memakai agent sandbox yang tidak bisa menjalankan browser lokal, suruh agen
 
 ## 6. Troubleshooting Singkat macOS
 
-- **`"brave"` / `"chrome"` tidak ditemukan walau sudah terpasang:**  
-  Pastikan aplikasi ada di `/Applications/Brave Browser.app` (bukan masih di file `.dmg` atau folder `Downloads`). Atau gunakan `--exe-path "/Applications/..."`.
+- **Browser tidak terdeteksi walau sudah diunduh:**  
+  Pastikan aplikasi sudah dipindahkan ke `/Applications/` (bukan masih berada di `Downloads` atau disk image `.dmg`). Atau gunakan `--exe-path "/Applications/..."`.
 - **Error profil terkunci / headless langsung keluar:**  
-  Pastikan jendela browser yang dibuka lewat shortcut `.command` sudah benar-benar ditutup (`Cmd+Q`) sebelum menjalankan mode background.
+  Pastikan jendela browser yang dibuka lewat shortcut `.command` sudah ditutup penuh (`Cmd+Q`) sebelum menjalankan mode headless.

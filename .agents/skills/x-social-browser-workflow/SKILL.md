@@ -1,105 +1,98 @@
 ---
 name: x-social-browser-workflow
 description: >-
-  Multi-browser X automation in hidden background (Firefox BiDi & Brave/Chrome/Edge CDP):
-  auto-detect installed browsers, create isolated Desktop shortcuts, auto-takeover debug ports,
-  auto-detect logged-in X user, read X posts, save validated non-question English drafts to SQLite,
-  and run verified Likes & Replies without touching the user's desktop work window.
+  Cross-OS isolated headless X workflow (Firefox WebDriver BiDi and Brave/Chrome/Edge CDP):
+  configure a dedicated workspace browser profile, generate OS launchers, connect on a loopback
+  debug port, detect the user's logged-in X account, read X posts, validate English drafts in SQLite,
+  and execute verified Likes and Replies or export a local action plan without disturbing desktop work.
 ---
 
 # X Social Browser Workflow
 
-Use this skill whenever the user wants to connect a browser, create a Desktop shortcut, auto-detect their X account, or supply X (`x.com`) status URLs to read, draft, like, or reply.
+This skill operates exclusively on the user's own confirmed account inside an isolated workspace browser profile (`AntiGravity-Browser/profiles/` for Chromium, or a named `-P` profile for Firefox) using localhost loopback (`127.0.0.1`) with strict origin pinning (`--remote-allow-origins=http://127.0.0.1:<port>`). Never modify or read the user's personal browser profile directories.
 
-## Step 0: Cross-OS Browser Connection, Shortcut/Launcher & X Account Auto-Detection
+## Step 0: Cross-OS Browser Profile & Account Setup
 
-Supports **Windows**, **Linux Desktop / headless Linux VPS**, and **macOS**.
-Use `<CLI>` = `.\target\release\x-social-draft-workflow.exe` (Windows) or `./target/release/x-social-draft-workflow` (Linux/macOS), and `<PYTHON>` = `.venv/bin/python` / `python3` (Linux/macOS) or `python` (Windows).
+- **Windows CLI:** `.\target\release\x-social-draft-workflow.exe`
+- **Linux / VPS / macOS CLI:** `./target/release/x-social-draft-workflow`
+- **Python runner:** `.venv/bin/python` or `python3` (Linux/macOS), `.venv\Scripts\python.exe` or `python` (Windows)
 
-Supported browsers: `firefox` (WebDriver BiDi), `brave`, `chrome`, `edge`, or `custom` (Chromium CDP, including macOS `.app` bundles).
+Supported browsers: `firefox` (WebDriver BiDi), `brave`, `chrome`, `edge`, or `custom` (including macOS `.app` bundles).
 
-- Inspect installed browsers, profiles, and active debug ports:
+- List installed browsers and workspace isolated profiles:
   ```bash
   ./target/release/x-social-draft-workflow list-browsers
   ```
-- Connect to the user's chosen browser (creates isolated profile, generates OS shortcut/launcher `.lnk`/`.desktop`/`.command`/`.sh`, designates browser in SQLite, and auto-detects logged-in X user in hidden background):
+- Connect a dedicated isolated profile, create an OS launcher (`.lnk` on Windows, `.desktop` + `.sh` on Linux, `.command` + `.sh` on macOS), and detect the logged-in X user in headless mode:
   ```bash
   ./target/release/x-social-draft-workflow connect-browser --browser brave --profile Agent
   ```
-  (Replace `brave` with `firefox`, `chrome`, `edge`, or `auto`.)
-- Auto-detect logged-in X handle & display name in hidden background anytime:
-  ```bash
-  ./target/release/x-social-draft-workflow auto-detect-account
-  ```
-- Recreate/refresh OS shortcut/launcher:
+- Refresh launcher or re-run X user detection:
   ```bash
   ./target/release/x-social-draft-workflow create-shortcut
+  ./target/release/x-social-draft-workflow auto-detect-account
   ```
 
-### Port & Stealth Guarantees
-- `browser_hub.py` automatically detects active debug ports (`DevToolsActivePort`, configured port in `browser_config.json`, or `9222..9235`) and attaches to a background tab without activating/focusing user windows.
-- If no dedicated browser port is open, it allocates a free port automatically and spawns the isolated profile in hidden background (`MOZ_HEADLESS=1` + `-headless` / `--headless=new`, `--disable-dev-shm-usage` on Linux VPS, Windows `CREATE_NO_WINDOW` + `SW_HIDE`, POSIX `start_new_session=True`), never touching the user's active desktop browser.
+## Step 1: Pre-Flight Status & Guidelines
 
-## Step 1: Pre-Flight Check
-
-```powershell
-.\target\release\x-social-draft-workflow.exe status
-.\target\release\x-social-draft-workflow.exe show-prompt
+```bash
+./target/release/x-social-draft-workflow status
+./target/release/x-social-draft-workflow show-prompt
 ```
 
-## Step 2: Read X Posts in Hidden Background (Any Count)
+## Step 2: Read X Posts in Headless Mode (Flexible Link Count)
 
-Accept **any number of links** supplied by the user (1, 3, 10, 25, 50+, never assume 10):
+Accept **any number of links** supplied by the user (1, 3, 10, 25, 50+, or more):
 
-```powershell
-# Pass URLs directly (1 or several):
-python .agents/skills/x-social-browser-workflow/scripts/read_posts.py `
-  --out data/observed_posts.json `
-  --urls "<url1>" "<url2>" ...
+```bash
+# Pass links directly:
+python3 .agents/skills/x-social-browser-workflow/scripts/read_posts.py \
+  --out data/observed_posts.json \
+  --urls "<url1>" "<url2>"
 
-# Or for large lists, put 1 URL per line in data/urls.txt:
-python .agents/skills/x-social-browser-workflow/scripts/read_posts.py `
-  --out data/observed_posts.json `
+# Or read from data/urls.txt (one URL per line):
+python3 .agents/skills/x-social-browser-workflow/scripts/read_posts.py \
+  --out data/observed_posts.json \
   --urls-file data/urls.txt
 ```
 
 ## Step 3: Record Posts & Validated English Drafts
 
-For each post:
+For each observed post:
 1. Save observed text to `data/post_<n>.txt` and run:
-   ```powershell
-   .\target\release\x-social-draft-workflow.exe add-post --url "<url>" --text-file data/post_<n>.txt --language <lang>
+   ```bash
+   ./target/release/x-social-draft-workflow add-post --url "<url>" --text-file data/post_<n>.txt --language <lang>
    ```
-2. Author `data/drafts_<n>.json` strictly following `reply_prompt.md`:
-   - `"language": "en"` ALWAYS, even when the source post is Indonesian or another language.
-   - Exactly 3 distinct one-line statements (`7-9` words each, including `project_short`).
-   - ZERO question marks (`?`/`？`), ZERO quotes, ZERO em/en dashes, ZERO emojis.
-3. Validate & store:
-   ```powershell
-   .\target\release\x-social-draft-workflow.exe save-drafts --post-id <id> --file data/drafts_<n>.json
+2. Author `data/drafts_<n>.json` following `reply_prompt.md`:
+   - `"language": "en"` ALWAYS (even if the source post is in Indonesian or another language).
+   - Exactly 3 distinct one-line statements (`7-9` words each, containing `project_short`).
+   - Zero question marks (`?`/`？`), quotes, em/en dashes, or emojis.
+3. Validate and save to SQLite:
+   ```bash
+   ./target/release/x-social-draft-workflow save-drafts --post-id <id> --file data/drafts_<n>.json
    ```
 
-## Step 4: Execute Verified Likes & Replies in Hidden Background (Random 5–60s Pacing)
+## Step 4: Execute Verified Likes & Replies or Provide Local Plan Runner
 
-Create `data/action_plan.json` (`index`, `post_id`, `draft_id`, `status_id`, `url`, `reply_text`) for all links provided by the user, then run:
+Prepare `data/action_plan.json` (`index`, `post_id`, `draft_id`, `status_id`, `url`, `reply_text`) for all user-supplied links.
 
-```powershell
-python -u .agents/skills/x-social-browser-workflow/scripts/engage_posts.py `
-  --plan data/action_plan.json `
-  --out data/engage_results.json `
-  --min-delay 5 `
-  --max-delay 60
-```
+- **When browser execution is enabled in this workspace**, run with default randomized `5.0–60.0`s pacing:
+  ```bash
+  python3 -u .agents/skills/x-social-browser-workflow/scripts/engage_posts.py \
+    --plan data/action_plan.json \
+    --out data/engage_results.json \
+    --min-delay 5 \
+    --max-delay 60
+  ```
+- **When running in a sandboxed or draft-only runtime**, hand off `data/action_plan.json` and instruct the user in Indonesian to execute `.\run-plan.ps1` (Windows) or `./run-plan.sh` (Linux/VPS/macOS).
 
-`engage_posts.py` automatically uses the randomized `5.0–60.0`s multi-band anti-clustering delay algorithm (even if `--min-delay` / `--max-delay` are omitted), adds in-post micro-jitter, auto-reads/detects `@handle`, uses WebDriver BiDi or Chromium CDP events, verifies `liked` + `visibleOwnReply`, and closes its tab/headless browser cleanly.
-
-If running in a restricted runtime without browser execution, let the user run `.\run-plan.ps1` (Windows) or `./run-plan.sh` (Linux/VPS/macOS) locally after `data/action_plan.json` is written.
-
-## Step 5: Confirm & Print Report in Indonesian
+## Step 5: Confirm & Print Report
 
 For verified rows (`"liked": true` and `"replied": true`):
-```powershell
-.\target\release\x-social-draft-workflow.exe confirm-posted --draft-id <draft_id>
-.\target\release\x-social-draft-workflow.exe confirm-liked --post-id <post_id>
-.\target\release\x-social-draft-workflow.exe report
+```bash
+./target/release/x-social-draft-workflow confirm-posted --draft-id <draft_id>
+./target/release/x-social-draft-workflow confirm-liked --post-id <post_id>
+./target/release/x-social-draft-workflow report
 ```
+
+Communicate all explanations and summaries to the user in clear Indonesian (Bahasa Indonesia).

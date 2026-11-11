@@ -29,7 +29,7 @@ else
   PY_BIN="python"
 fi
 
-echo "[1/3] Menjalankan eksekusi hidden background (jeda acak ${MIN_DELAY}-${MAX_DELAY} detik)..."
+echo "[1/3] Menjalankan eksekusi headless terisolasi (jeda acak ${MIN_DELAY}-${MAX_DELAY} detik)..."
 "$PY_BIN" -u .agents/skills/x-social-browser-workflow/scripts/engage_posts.py \
   --plan "$PLAN" \
   --out "$OUT" \

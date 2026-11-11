@@ -62,8 +62,8 @@ pub fn initialize_schema(connection: &Connection) -> Result<()> {
     let defaults = [
         ("browser_mode", "headless_or_isolated_debug; separate browser profile required"),
         ("access_mode", "multi_browser_bidi_cdp; X API disabled"),
-        ("auto_like", "enabled via hidden browser skill when user requests"),
-        ("auto_reply", "enabled via hidden browser skill when user requests"),
+        ("auto_like", "enabled via isolated headless browser workflow when user requests"),
+        ("auto_reply", "enabled via isolated headless browser workflow when user requests"),
         ("draft_count", "3"),
         ("report_format", "markdown_table"),
         (

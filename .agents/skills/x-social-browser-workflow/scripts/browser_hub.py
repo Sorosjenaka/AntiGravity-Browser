@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import configparser
+import http.client
 import json
 import os
 import random
@@ -8,11 +9,10 @@ import re
 import shlex
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 import websockets
@@ -66,7 +66,7 @@ BROWSER_META = {
             "win32": [
                 r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
                 r"C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe",
-                r"{LOCALAPPDATA}\BraveSoftware\Brave-Browser\Application\brave.exe",
+                r"{HOME}\AppData\Local\BraveSoftware\Brave-Browser\Application\brave.exe",
             ],
             "linux": [
                 "/usr/bin/brave-browser",
@@ -90,7 +90,7 @@ BROWSER_META = {
             "win32": [
                 r"C:\Program Files\Google\Chrome\Application\chrome.exe",
                 r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-                r"{LOCALAPPDATA}\Google\Chrome\Application\chrome.exe",
+                r"{HOME}\AppData\Local\Google\Chrome\Application\chrome.exe",
             ],
             "linux": [
                 "/usr/bin/google-chrome",
@@ -116,7 +116,7 @@ BROWSER_META = {
             "win32": [
                 r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
                 r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-                r"{LOCALAPPDATA}\Microsoft\Edge\Application\msedge.exe",
+                r"{HOME}\AppData\Local\Microsoft\Edge\Application\msedge.exe",
             ],
             "linux": [
                 "/usr/bin/microsoft-edge",
@@ -132,19 +132,6 @@ BROWSER_META = {
     },
 }
 
-
-def hidden_popen_kwargs() -> dict:
-    if os.name != "nt":
-        return {"start_new_session": True}
-    si = subprocess.STARTUPINFO()
-    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    si.wShowWindow = 0
-    return {
-        "startupinfo": si,
-        "creationflags": subprocess.CREATE_NO_WINDOW,
-    }
-
-
 _RNG = random.SystemRandom()
 
 
@@ -154,7 +141,7 @@ def compute_random_delay(
     prev_delay: float | None = None,
 ) -> float:
     """
-    Human-like multi-band randomized delay algorithm strictly within [min_sec, max_sec].
+    Human-like multi-band randomized delay strictly within [min_sec, max_sec].
     Default range: 5.0s to 60.0s with anti-clustering against prev_delay.
     """
     if min_sec < 0 or max_sec < min_sec:
@@ -164,9 +151,9 @@ def compute_random_delay(
 
     span = max_sec - min_sec
     bands = [
-        (0.00, 0.25, 0.25),  # quick cadence (e.g. 5s - 18.75s)
-        (0.25, 0.65, 0.45),  # normal cadence (e.g. 18.75s - 40.75s)
-        (0.65, 1.00, 0.30),  # resting pause (e.g. 40.75s - 60s)
+        (0.00, 0.25, 0.25),
+        (0.25, 0.65, 0.45),
+        (0.65, 1.00, 0.30),
     ]
     min_gap = min(3.0, span * 0.12)
 
@@ -190,14 +177,7 @@ def compute_random_delay(
 
 
 def expand_candidate(path_tmpl: str) -> Path:
-    local_app = os.environ.get("LOCALAPPDATA", "")
-    appdata = os.environ.get("APPDATA", "")
-    home = str(Path.home())
-    return Path(
-        path_tmpl.replace("{LOCALAPPDATA}", local_app)
-        .replace("{APPDATA}", appdata)
-        .replace("{HOME}", home)
-    )
+    return Path(path_tmpl.replace("{HOME}", str(Path.home())))
 
 
 def _resolve_macos_app_binary(app_path: Path) -> str | None:
@@ -240,8 +220,7 @@ def firefox_profile_ini_paths() -> list[Path]:
     plat = _platform_key()
     home = Path.home()
     if plat == "win32":
-        appdata = os.environ.get("APPDATA") or str(home / "AppData" / "Roaming")
-        return [Path(appdata) / "Mozilla" / "Firefox" / "profiles.ini"]
+        return [home / "AppData" / "Roaming" / "Mozilla" / "Firefox" / "profiles.ini"]
     if plat == "darwin":
         return [home / "Library" / "Application Support" / "Firefox" / "profiles.ini"]
     return [
@@ -271,71 +250,32 @@ def list_firefox_profiles() -> list[dict]:
                         "name": name,
                         "path": cp.get(sec, "Path", fallback=""),
                         "is_default": cp.get(sec, "Default", fallback="0") == "1",
-                        "ini_dir": str(ini_path.parent),
                     }
                 )
     return out
-
-
-def list_chromium_profiles(user_data_dir: Path) -> list[dict]:
-    ls = user_data_dir / "Local State"
-    out = []
-    if not ls.exists():
-        return out
-    try:
-        data = json.loads(ls.read_text(encoding="utf-8"))
-        cache = data.get("profile", {}).get("info_cache", {})
-        for dir_name, info in cache.items():
-            out.append(
-                {
-                    "directory": dir_name,
-                    "name": info.get("name", dir_name),
-                }
-            )
-    except Exception:
-        pass
-    return out
-
-
-def default_chromium_user_data_dirs() -> dict[str, list[Path]]:
-    plat = _platform_key()
-    home = Path.home()
-    if plat == "win32":
-        local_app = Path(os.environ.get("LOCALAPPDATA") or str(home / "AppData" / "Local"))
-        return {
-            "brave": [local_app / "BraveSoftware" / "Brave-Browser" / "User Data"],
-            "chrome": [local_app / "Google" / "Chrome" / "User Data"],
-            "edge": [local_app / "Microsoft" / "Edge" / "User Data"],
-        }
-    if plat == "darwin":
-        app_sup = home / "Library" / "Application Support"
-        return {
-            "brave": [app_sup / "BraveSoftware" / "Brave-Browser"],
-            "chrome": [app_sup / "Google" / "Chrome", app_sup / "Chromium"],
-            "edge": [app_sup / "Microsoft Edge"],
-        }
-    cfg_home = Path(os.environ.get("XDG_CONFIG_HOME") or str(home / ".config"))
-    return {
-        "brave": [cfg_home / "BraveSoftware" / "Brave-Browser"],
-        "chrome": [
-            cfg_home / "google-chrome",
-            cfg_home / "chromium",
-            home / "snap" / "chromium" / "common" / "chromium",
-        ],
-        "edge": [cfg_home / "microsoft-edge"],
-    }
 
 
 def agent_profiles_root() -> Path:
     plat = _platform_key()
     home = Path.home()
     if plat == "win32":
-        base = Path(os.environ.get("LOCALAPPDATA") or str(home / "AppData" / "Local"))
+        base = home / "AppData" / "Local"
     elif plat == "darwin":
         base = home / "Library" / "Application Support"
     else:
-        base = Path(os.environ.get("XDG_DATA_HOME") or str(home / ".local" / "share"))
+        base = home / ".local" / "share"
     return base / "AntiGravity-Browser" / "profiles"
+
+
+def resolve_desktop_dir() -> Path | None:
+    home = Path.home()
+    if _platform_key() == "win32":
+        for cand in (home / "OneDrive" / "Desktop", home / "Desktop"):
+            if cand.is_dir():
+                return cand
+        return home / "Desktop"
+    desk = home / "Desktop"
+    return desk if desk.is_dir() else None
 
 
 def sanitize_slug(value: str) -> str:
@@ -343,60 +283,48 @@ def sanitize_slug(value: str) -> str:
     return slug or "Agent"
 
 
-def probe_cdp_port(port: int, timeout: float = 0.4) -> dict | None:
+def _loopback_get(port: int, path: str, timeout: float = 0.5) -> tuple[int, str] | None:
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
     try:
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{port}/json/version", timeout=timeout
-        ) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            if isinstance(data, dict) and data.get("webSocketDebuggerUrl"):
-                return {
-                    "engine": "cdp",
-                    "port": port,
-                    "browser": data.get("Browser"),
-                    "ws_url": data["webSocketDebuggerUrl"],
-                }
+        conn.request("GET", path)
+        resp = conn.getresponse()
+        body = resp.read().decode("utf-8", errors="replace")
+        return resp.status, body
+    except Exception:
+        return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def probe_cdp_port(port: int, timeout: float = 0.4) -> dict | None:
+    res = _loopback_get(port, "/json/version", timeout=timeout)
+    if not res or res[0] != 200:
+        return None
+    try:
+        data = json.loads(res[1])
+        if isinstance(data, dict) and data.get("webSocketDebuggerUrl"):
+            return {
+                "engine": "cdp",
+                "port": port,
+                "browser": data.get("Browser"),
+                "ws_url": data["webSocketDebuggerUrl"],
+            }
     except Exception:
         pass
     return None
 
 
-def cdp_has_x_tab(port: int, timeout: float = 0.4) -> bool:
-    try:
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{port}/json/list", timeout=timeout
-        ) as resp:
-            tabs = json.loads(resp.read().decode("utf-8"))
-            if isinstance(tabs, list):
-                for tab in tabs:
-                    url = (tab.get("url") or "").lower()
-                    if "x.com" in url or "twitter.com" in url:
-                        return True
-    except Exception:
-        pass
-    return False
-
-
 def probe_bidi_port(port: int, timeout: float = 0.4) -> dict | None:
-    try:
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{port}/session", timeout=timeout
-        ) as _:
-            return {
-                "engine": "bidi",
-                "port": port,
-                "ws_url": f"ws://127.0.0.1:{port}/session",
-            }
-    except urllib.error.HTTPError as exc:
-        # Firefox WebDriver BiDi returns HTTP 400 Upgrade Required on GET /session
-        if exc.code in (400, 426):
-            return {
-                "engine": "bidi",
-                "port": port,
-                "ws_url": f"ws://127.0.0.1:{port}/session",
-            }
-    except Exception:
-        pass
+    res = _loopback_get(port, "/session", timeout=timeout)
+    if res and res[0] in (200, 400, 426):
+        return {
+            "engine": "bidi",
+            "port": port,
+            "ws_url": f"ws://127.0.0.1:{port}/session",
+        }
     return None
 
 
@@ -438,29 +366,26 @@ def _is_port_open(port: int, timeout: float = 0.12) -> bool:
         s.close()
 
 
-def scan_active_debug_ports(
-    extra_ports: list[int] | None = None,
-    user_data_dir: Path | None = None,
+def check_configured_ports(
+    cfg: dict | None = None,
+    port_override: int | None = None,
 ) -> list[dict]:
-    from concurrent.futures import ThreadPoolExecutor
-
-    ports = []
-    dt_port = read_devtools_active_port(user_data_dir)
-    if dt_port:
-        ports.append(dt_port)
-    for p in (extra_ports or []):
-        if p and p not in ports:
-            ports.append(p)
-    for p in range(9222, 9236):
-        if p not in ports:
-            ports.append(p)
-
-    with ThreadPoolExecutor(max_workers=len(ports) or 1) as ex:
-        open_flags = list(ex.map(_is_port_open, ports))
+    """Check only explicit/configured dedicated profile loopback ports."""
+    ports: list[int] = []
+    if port_override:
+        ports.append(int(port_override))
+    if cfg:
+        ud = Path(cfg["user_data_dir"]) if cfg.get("user_data_dir") else None
+        dt_port = read_devtools_active_port(ud)
+        if dt_port and dt_port not in ports:
+            ports.append(dt_port)
+        cfg_port = cfg.get("port")
+        if cfg_port and int(cfg_port) not in ports:
+            ports.append(int(cfg_port))
 
     active = []
-    for p, is_open in zip(ports, open_flags):
-        if not is_open:
+    for p in ports:
+        if not _is_port_open(p):
             continue
         info = probe_cdp_port(p, timeout=0.35) or probe_bidi_port(p, timeout=0.35)
         if info:
@@ -468,26 +393,17 @@ def scan_active_debug_ports(
     return active
 
 
-def discover_browsers() -> dict:
+def discover_browsers(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
     browsers = {}
-    default_ud_dirs = default_chromium_user_data_dirs()
     for kind, meta in BROWSER_META.items():
         exe = resolve_browser_exe(kind)
-        profiles = []
-        if kind == "firefox":
-            profiles = list_firefox_profiles()
-        else:
-            for ud in default_ud_dirs.get(kind, []):
-                if ud and ud.exists():
-                    profiles = list_chromium_profiles(ud)
-                    if profiles:
-                        break
+        profiles = list_firefox_profiles() if kind == "firefox" else []
         browsers[kind] = {
             "display": meta["display"],
             "engine": meta["engine"],
             "installed": exe is not None,
             "executable": exe,
-            "desktop_profiles": profiles,
+            "profiles": profiles,
         }
 
     agent_dirs = []
@@ -495,11 +411,14 @@ def discover_browsers() -> dict:
     if root.exists():
         agent_dirs = [str(p) for p in sorted(root.iterdir()) if p.is_dir()]
 
+    cfg = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else None
+    active_ports = check_configured_ports(cfg) if cfg else []
+
     return {
         "platform": _platform_key(),
         "browsers": browsers,
         "agent_isolated_profiles": agent_dirs,
-        "active_debug_ports": scan_active_debug_ports(),
+        "active_configured_ports": active_ports,
     }
 
 
@@ -508,15 +427,11 @@ def ensure_firefox_profile(firefox_exe: str, profile_name: str):
     if profile_name.lower() in existing:
         return existing[profile_name.lower()]
     cmd = [firefox_exe, "-no-remote", "-headless", "-CreateProfile", profile_name]
-    env = os.environ.copy()
-    env["MOZ_HEADLESS"] = "1"
     subprocess.run(
         cmd,
-        env=env,
         check=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        **hidden_popen_kwargs(),
     )
     return profile_name
 
@@ -524,7 +439,6 @@ def ensure_firefox_profile(firefox_exe: str, profile_name: str):
 def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
     if config_path.exists():
         return json.loads(config_path.read_text(encoding="utf-8"))
-    # Backward-compatible default matching Firefox Raid profile if installed
     ff = resolve_browser_exe("firefox")
     if ff:
         return {
@@ -559,6 +473,7 @@ def build_browser_launch_args(cfg: dict) -> tuple[str, list[str]]:
     exe = cfg["executable"]
     profile = cfg.get("profile", "Agent")
     port = int(cfg.get("port") or 9223)
+    origin = f"http://127.0.0.1:{port}"
     if cfg["engine"] == "bidi":
         args_list = [
             "-no-remote",
@@ -569,7 +484,7 @@ def build_browser_launch_args(cfg: dict) -> tuple[str, list[str]]:
             "--remote-allow-hosts",
             "localhost,127.0.0.1",
             "--remote-allow-origins",
-            f"http://127.0.0.1:{port}",
+            origin,
             "https://x.com/home",
         ]
     else:
@@ -579,7 +494,7 @@ def build_browser_launch_args(cfg: dict) -> tuple[str, list[str]]:
             f"--user-data-dir={ud}",
             f"--profile-directory={pdir}",
             f"--remote-debugging-port={port}",
-            "--remote-allow-origins=*",
+            f"--remote-allow-origins={origin}",
             "--no-first-run",
             "--no-default-browser-check",
             "https://x.com/home",
@@ -591,24 +506,25 @@ def build_shortcut_spec(cfg: dict) -> tuple[str, str, str]:
     kind = cfg["browser"]
     profile = cfg.get("profile", "Agent")
     exe, args_list = build_browser_launch_args(cfg)
+    port = int(cfg.get("port") or 9223)
+    origin = f"http://127.0.0.1:{port}"
     if _platform_key() == "win32":
         if cfg["engine"] == "bidi":
             args = (
                 f'-no-remote -P "{profile}" '
-                f'--remote-debugging-port {int(cfg.get("port") or 9223)} '
+                f'--remote-debugging-port {port} '
                 f'--remote-allow-hosts localhost,127.0.0.1 '
-                f'--remote-allow-origins http://127.0.0.1:{int(cfg.get("port") or 9223)} '
+                f'--remote-allow-origins {origin} '
                 f'https://x.com/home'
             )
         else:
             ud = cfg["user_data_dir"]
             pdir = cfg.get("profile_directory", "Default")
-            port = int(cfg.get("port") or 9224)
             args = (
                 f'--user-data-dir="{ud}" '
                 f'--profile-directory="{pdir}" '
                 f'--remote-debugging-port={port} '
-                f'--remote-allow-origins=* '
+                f'--remote-allow-origins={origin} '
                 f'--no-first-run --no-default-browser-check '
                 f'https://x.com/home'
             )
@@ -620,6 +536,100 @@ def build_shortcut_spec(cfg: dict) -> tuple[str, str, str]:
         args = " ".join(shlex.quote(a) for a in args_list)
         short_name = f"AntiGravity X ({kind.capitalize()} - {profile}).desktop"
     return short_name, exe, args
+
+
+def _build_windows_idlist(target_path: str) -> bytes:
+    p = Path(target_path)
+    items = [bytes.fromhex("14001f50e04fd020ea3a6910a2d808002b30309d")]
+    drive_str = (p.drive + "\\") if p.drive else "C:\\"
+    drive_bytes = drive_str.encode("ascii", errors="replace")
+    drive_item = b"\x2f" + drive_bytes + b"\x00" * max(1, 22 - len(drive_bytes))
+    items.append(struct.pack("<H", 2 + len(drive_item)) + drive_item)
+
+    parts = [part for part in p.parts[1:]] if len(p.parts) > 1 else []
+    for idx, part in enumerate(parts):
+        is_file = idx == len(parts) - 1
+        flags_byte = b"\x32" if is_file else b"\x31"
+        short_name = part.encode("ascii", errors="replace") + b"\x00"
+        if len(short_name) % 2 == 1:
+            short_name += b"\x00"
+        u_name = part.encode("utf-16-le") + b"\x00\x00"
+        beef_body = (
+            struct.pack("<HHI", 0x0009, 0x0004, 0xBEEF0004)
+            + b"\x00" * 12
+            + struct.pack("<H", 0x002E)
+            + b"\x00" * 16
+            + u_name
+            + struct.pack("<H", 0x16)
+        )
+        beef = struct.pack("<H", len(beef_body) + 2) + beef_body
+        entry_body = (
+            flags_byte
+            + b"\x00"
+            + struct.pack("<IHHH", 0, 0, 0, 0x20 if is_file else 0x10)
+            + short_name
+            + beef
+        )
+        items.append(struct.pack("<H", 2 + len(entry_body)) + entry_body)
+
+    raw = b"".join(items) + b"\x00\x00"
+    return struct.pack("<H", len(raw)) + raw
+
+
+def write_windows_lnk(
+    lnk_path: Path,
+    target_exe: str,
+    arguments: str,
+    working_dir: str,
+    description: str,
+):
+    """Write standard [MS-SHLLINK] .lnk binary shortcut directly in pure Python."""
+
+    def counted_utf16(text: str) -> bytes:
+        return struct.pack("<H", len(text)) + text.encode("utf-16-le")
+
+    flags = 0x01 | 0x02 | 0x04 | 0x10 | 0x20 | 0x80
+    header = bytearray(76)
+    struct.pack_into("<I", header, 0, 0x4C)
+    header[4:20] = bytes.fromhex("0114020000000000c000000000000046")
+    struct.pack_into("<I", header, 20, flags)
+    struct.pack_into("<I", header, 24, 0x20)
+    struct.pack_into("<I", header, 60, 1)
+
+    idlist = _build_windows_idlist(target_exe)
+
+    vol_id_body = struct.pack("<III", 3, 0, 16) + b"\x00"
+    vol_id = struct.pack("<I", 4 + len(vol_id_body)) + vol_id_body
+    local_base = target_exe.encode("mbcs", errors="replace") + b"\x00"
+    common_suffix = b"\x00"
+    li_hdr_size = 28
+    vol_offset = li_hdr_size
+    base_offset = vol_offset + len(vol_id)
+    suffix_offset = base_offset + len(local_base)
+    link_info_size = suffix_offset + len(common_suffix)
+    link_info = (
+        struct.pack(
+            "<IIIIIII",
+            link_info_size,
+            li_hdr_size,
+            0x01,
+            vol_offset,
+            base_offset,
+            0,
+            suffix_offset,
+        )
+        + vol_id
+        + local_base
+        + common_suffix
+    )
+
+    string_data = (
+        counted_utf16(description)
+        + counted_utf16(working_dir)
+        + counted_utf16(arguments)
+    )
+    lnk_path.parent.mkdir(parents=True, exist_ok=True)
+    lnk_path.write_bytes(bytes(header) + idlist + link_info + string_data)
 
 
 def _write_unix_executable(path: Path, content: str):
@@ -639,58 +649,18 @@ def create_shortcut(cfg: dict, also_repo_dir: bool = True) -> dict:
     _, args_list = build_browser_launch_args(cfg)
 
     if plat == "win32":
-        desktop_dir = Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Desktop"
-        try:
-            # Respect localized or redirected Windows Desktop path via Shell
-            res = subprocess.run(
-                [
-                    "powershell",
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-Command",
-                    "[Environment]::GetFolderPath('Desktop')",
-                ],
-                capture_output=True,
-                text=True,
-                **hidden_popen_kwargs(),
-            )
-            if res.returncode == 0 and res.stdout.strip():
-                desktop_dir = Path(res.stdout.strip())
-        except Exception:
-            pass
-
+        desktop_dir = resolve_desktop_dir() or (Path.home() / "Desktop")
         targets = [desktop_dir / short_name]
         if also_repo_dir:
             repo_short_dir = Path("shortcuts")
             repo_short_dir.mkdir(parents=True, exist_ok=True)
             targets.append((repo_short_dir / short_name).resolve())
 
-        def ps_quote(val: str) -> str:
-            return "'" + val.replace("'", "''") + "'"
-
-        import base64
-
         created = []
+        work_dir = str(Path(target_exe).parent)
+        desc = f"Isolated X profile ({kind} - {profile})"
         for lnk in targets:
-            lnk.parent.mkdir(parents=True, exist_ok=True)
-            ps = (
-                "$ws = New-Object -ComObject WScript.Shell; "
-                f"$sc = $ws.CreateShortcut({ps_quote(str(lnk))}); "
-                f"$sc.TargetPath = {ps_quote(str(target_exe))}; "
-                f"$sc.Arguments = {ps_quote(args)}; "
-                f"$sc.WorkingDirectory = {ps_quote(str(Path(target_exe).parent))}; "
-                f"$sc.Description = {ps_quote('Profil terpisah X AntiGravity (tidak mengganggu browser kerja utama)')}; "
-                "$sc.Save()"
-            )
-            encoded = base64.b64encode(ps.encode("utf-16-le")).decode("ascii")
-            subprocess.run(
-                ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                text=True,
-                **hidden_popen_kwargs(),
-            )
+            write_windows_lnk(lnk, str(target_exe), args, work_dir, desc)
             created.append(str(lnk))
 
         return {
@@ -705,8 +675,8 @@ def create_shortcut(cfg: dict, also_repo_dir: bool = True) -> dict:
     cmd_line = " ".join(shlex.quote(a) for a in [str(target_exe), *args_list])
     shell_script = (
         "#!/usr/bin/env bash\n"
-        f"# Profil terpisah X AntiGravity ({kind} - {profile})\n"
-        f"nohup {cmd_line} >/dev/null 2>&1 &\n"
+        f"# Isolated X profile launcher ({kind} - {profile})\n"
+        f"{cmd_line}\n"
     )
 
     repo_short_dir = Path("shortcuts")
@@ -719,9 +689,9 @@ def create_shortcut(cfg: dict, also_repo_dir: bool = True) -> dict:
         created.append(str(shell_path))
 
     if plat == "darwin":
-        desktop_dir = Path.home() / "Desktop"
+        desktop_dir = resolve_desktop_dir()
         desktop_file = None
-        if desktop_dir.is_dir():
+        if desktop_dir and desktop_dir.is_dir():
             df = desktop_dir / short_name
             _write_unix_executable(df, shell_script)
             desktop_file = str(df)
@@ -739,9 +709,8 @@ def create_shortcut(cfg: dict, also_repo_dir: bool = True) -> dict:
             "arguments": args,
         }
 
-    # Linux Desktop + headless VPS compatible (.desktop + .sh)
     def desktop_exec_token(val: str) -> str:
-        if any(ch in val for ch in (' ', '\t', '"', '\\')):
+        if any(ch in val for ch in (" ", "\t", '"', "\\")):
             escaped = val.replace("\\", "\\\\").replace('"', '\\"')
             return f'"{escaped}"'
         return val
@@ -752,21 +721,21 @@ def create_shortcut(cfg: dict, also_repo_dir: bool = True) -> dict:
         "Version=1.0\n"
         "Type=Application\n"
         f"Name=AntiGravity X ({kind.capitalize()} - {profile})\n"
-        "Comment=Profil terpisah X AntiGravity (tidak mengganggu browser kerja utama)\n"
+        "Comment=Isolated X browser profile\n"
         f"Exec={exec_line}\n"
         "Terminal=false\n"
         "Categories=Network;WebBrowser;\n"
     )
 
     desktop_file = None
-    linux_desktop = Path.home() / "Desktop"
-    if linux_desktop.is_dir():
+    linux_desktop = resolve_desktop_dir()
+    if linux_desktop and linux_desktop.is_dir():
         df = linux_desktop / short_name
         _write_unix_executable(df, desktop_entry)
         desktop_file = str(df)
         created.insert(0, desktop_file)
 
-    apps_dir = Path(os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")) / "applications"
+    apps_dir = Path.home() / ".local" / "share" / "applications"
     app_entry = apps_dir / f"antigravity-x-{slug}.desktop"
     _write_unix_executable(app_entry, desktop_entry)
     created.append(str(app_entry))
@@ -784,9 +753,6 @@ def create_shortcut(cfg: dict, also_repo_dir: bool = True) -> dict:
         "all_shortcuts": created,
         "arguments": args,
     }
-
-
-create_windows_shortcut = create_shortcut
 
 
 def _resolve_cli_exe(cli_path: Path) -> Path | None:
@@ -807,7 +773,6 @@ def _resolve_cli_exe(cli_path: Path) -> Path | None:
 def run_workflow_cli(args: list[str], cli_path: Path = DEFAULT_CLI_PATH, db_path: Path | None = None) -> str:
     exe = _resolve_cli_exe(cli_path)
     if exe is None:
-        # Fall back to cargo run if release binary was not built yet
         cmd = ["cargo", "run", "--quiet", "--"]
     else:
         cmd = [str(exe)]
@@ -819,7 +784,6 @@ def run_workflow_cli(args: list[str], cli_path: Path = DEFAULT_CLI_PATH, db_path
         capture_output=True,
         text=True,
         encoding="utf-8",
-        **hidden_popen_kwargs(),
     )
     if res.returncode != 0:
         raise RuntimeError(f"CLI error ({' '.join(cmd)}): {res.stderr.strip() or res.stdout.strip()}")
@@ -827,7 +791,7 @@ def run_workflow_cli(args: list[str], cli_path: Path = DEFAULT_CLI_PATH, db_path
 
 
 # ============================================================================
-# Unified Hidden Background Browser Session (Firefox BiDi + Chromium CDP)
+# Headless Isolated Browser Session (Firefox BiDi + Chromium CDP)
 # ============================================================================
 
 
@@ -882,7 +846,6 @@ class _BiDiSession:
         )
         self.ctx = tab["result"]["context"]
         if self.owns_process:
-            # In headless mode, activating the isolated context improves input focus reliability
             await self._call("browsingContext.activate", {"context": self.ctx})
 
     async def navigate(self, url: str):
@@ -891,7 +854,7 @@ class _BiDiSession:
             {"context": self.ctx, "url": url, "wait": "complete"},
         )
 
-    async def eval_js(self, expr: str):
+    async def evaluate_dom(self, expr: str):
         res = await self._call(
             "script.evaluate",
             {
@@ -901,10 +864,10 @@ class _BiDiSession:
             },
         )
         if res.get("type") == "error":
-            raise RuntimeError(f"BiDi JS error: {res}")
+            raise RuntimeError(f"BiDi script error: {res}")
         r = res.get("result", {})
         if r.get("type") == "exception":
-            raise RuntimeError(f"JS exception: {r}")
+            raise RuntimeError(f"DOM exception: {r}")
         return from_bidi_val(r.get("result"))
 
     async def click_point(self, x: float, y: float):
@@ -996,7 +959,11 @@ class _CDPSession:
                 return data
 
     async def start(self):
-        self.ws = await websockets.connect(self.ws_url, max_size=16 * 1024 * 1024)
+        self.ws = await websockets.connect(
+            self.ws_url,
+            origin=f"http://127.0.0.1:{self.port}",
+            max_size=16 * 1024 * 1024,
+        )
         created = await self._call(
             "Target.createTarget",
             {"url": "about:blank", "background": True},
@@ -1017,12 +984,12 @@ class _CDPSession:
         if res.get("result", {}).get("errorText"):
             raise RuntimeError(f"Navigation error: {res['result']['errorText']}")
         for _ in range(30):
-            state = await self.eval_js("document.readyState")
+            state = await self.evaluate_dom("document.readyState")
             if state == "complete":
                 break
             await asyncio.sleep(0.25)
 
-    async def eval_js(self, expr: str):
+    async def evaluate_dom(self, expr: str):
         res = await self._call(
             "Runtime.evaluate",
             {
@@ -1036,7 +1003,7 @@ class _CDPSession:
             raise RuntimeError(f"CDP Runtime.evaluate error: {res['error']}")
         r = res.get("result", {})
         if "exceptionDetails" in r:
-            raise RuntimeError(f"JS exception: {r['exceptionDetails']}")
+            raise RuntimeError(f"DOM exception: {r['exceptionDetails']}")
         return r.get("result", {}).get("value")
 
     async def click_point(self, x: float, y: float):
@@ -1112,16 +1079,15 @@ def _default_user_agent() -> str:
     return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
 
 
-def _start_hidden_process(cfg: dict, port: int) -> tuple[subprocess.Popen, str]:
+def _start_headless_process(cfg: dict, port: int) -> tuple[subprocess.Popen, str]:
     exe = cfg["executable"]
     if not Path(exe).exists() and not shutil.which(exe):
         raise FileNotFoundError(f"Browser executable not found: {exe}")
 
+    origin = f"http://127.0.0.1:{port}"
     if cfg["engine"] == "bidi":
         profile = ensure_firefox_profile(exe, cfg.get("profile", "Raid"))
         allow_hosts = cfg.get("allow_hosts", "localhost,127.0.0.1")
-        env = os.environ.copy()
-        env["MOZ_HEADLESS"] = "1"
         proc = subprocess.Popen(
             [
                 exe,
@@ -1134,12 +1100,10 @@ def _start_hidden_process(cfg: dict, port: int) -> tuple[subprocess.Popen, str]:
                 "--remote-allow-hosts",
                 allow_hosts,
                 "--remote-allow-origins",
-                f"http://127.0.0.1:{port}",
+                origin,
             ],
-            env=env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            **hidden_popen_kwargs(),
         )
         for _ in range(36):
             time.sleep(0.5)
@@ -1149,12 +1113,11 @@ def _start_hidden_process(cfg: dict, port: int) -> tuple[subprocess.Popen, str]:
             if proc.poll() is not None:
                 raise RuntimeError(
                     f"Firefox headless exited early (code {proc.returncode}). "
-                    f"Pastikan jendela login profil '{profile}' sudah ditutup sebelum menjalankan mode background."
+                    f"Pastikan jendela login profil '{profile}' sudah ditutup sebelum menjalankan mode headless."
                 )
         proc.terminate()
         raise RuntimeError(f"Timed out waiting for headless Firefox BiDi on port {port}")
 
-    # Chromium CDP (Brave, Chrome, Edge)
     ud = Path(cfg["user_data_dir"])
     ud.mkdir(parents=True, exist_ok=True)
     pdir = cfg.get("profile_directory", "Default")
@@ -1164,13 +1127,11 @@ def _start_hidden_process(cfg: dict, port: int) -> tuple[subprocess.Popen, str]:
         "--disable-gpu",
         "--no-first-run",
         "--no-default-browser-check",
-        "--disable-blink-features=AutomationControlled",
         f"--user-agent={_default_user_agent()}",
-        "--window-position=-32000,-32000",
         f"--user-data-dir={ud}",
         f"--profile-directory={pdir}",
         f"--remote-debugging-port={port}",
-        "--remote-allow-origins=*",
+        f"--remote-allow-origins={origin}",
     ]
     if _platform_key() == "linux":
         cmd.append("--disable-dev-shm-usage")
@@ -1180,7 +1141,6 @@ def _start_hidden_process(cfg: dict, port: int) -> tuple[subprocess.Popen, str]:
         cmd,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        **hidden_popen_kwargs(),
     )
     for _ in range(36):
         time.sleep(0.4)
@@ -1196,44 +1156,30 @@ def _start_hidden_process(cfg: dict, port: int) -> tuple[subprocess.Popen, str]:
     raise RuntimeError(f"Timed out waiting for headless Chromium CDP on port {port}")
 
 
-def open_hidden_session(cfg: dict, port_override: int | None = None):
+def open_headless_session(cfg: dict, port_override: int | None = None):
     """
-    Auto-takeover logic for any agent (Antigravity, Gemini, Codex, Claude, Hermes):
-    1. If an active matching debug port already exists (configured port, DevToolsActivePort, or 9222-9235),
-       attach directly to it in background without touching user's main desktop window.
-    2. Otherwise, allocate a free localhost port and launch the configured browser profile
-       100% hidden in background (headless + CREATE_NO_WINDOW + SW_HIDE).
+    Attach to this workspace's own configured loopback port if already active,
+    otherwise allocate a free localhost port and launch the isolated profile in headless mode.
     """
     engine = cfg["engine"]
-    ud_path = Path(cfg["user_data_dir"]) if cfg.get("user_data_dir") else None
-    dt_port = read_devtools_active_port(ud_path)
     pref_port = port_override or cfg.get("port")
-
-    active_ports = scan_active_debug_ports(
-        extra_ports=[int(pref_port)] if pref_port else None,
-        user_data_dir=ud_path,
-    )
-    for info in active_ports:
-        p = info["port"]
+    active = check_configured_ports(cfg, port_override=port_override)
+    for info in active:
         if info["engine"] != engine:
             continue
         if engine == "bidi":
-            if (pref_port and p == int(pref_port)) or port_override == p:
-                return _BiDiSession(info["ws_url"], p, owns_process=False, proc=None)
-        else:
-            if p == dt_port or p == int(pref_port or -1) or cdp_has_x_tab(p):
-                return _CDPSession(info["ws_url"], p, owns_process=False, proc=None)
+            return _BiDiSession(info["ws_url"], info["port"], owns_process=False, proc=None)
+        return _CDPSession(info["ws_url"], info["port"], owns_process=False, proc=None)
 
-    # Step 2: Nothing listening for our isolated browser profile -> pick a free port and launch completely hidden
     port = find_free_port(int(pref_port) if pref_port else None)
-    proc, ws_url = _start_hidden_process(cfg, port)
+    proc, ws_url = _start_headless_process(cfg, port)
     if engine == "bidi":
         return _BiDiSession(ws_url, port, owns_process=True, proc=proc)
     return _CDPSession(ws_url, port, owns_process=True, proc=proc)
 
 
 # ============================================================================
-# Auto-Detect Logged-In X Account
+# Auto-Detect Logged-In X Account in Isolated Headless Profile
 # ============================================================================
 
 DETECT_HOME_JS = r"""(() => {
@@ -1278,14 +1224,14 @@ def parse_display_name(profile_info: dict, handle_clean: str) -> str:
 
 
 async def _detect_account_async(cfg: dict, port_override: int | None):
-    sess = open_hidden_session(cfg, port_override=port_override)
+    sess = open_headless_session(cfg, port_override=port_override)
     await sess.start()
     try:
         await sess.navigate("https://x.com/home")
         home_data = None
         for _ in range(18):
             await asyncio.sleep(0.8)
-            home_data = await sess.eval_js(DETECT_HOME_JS)
+            home_data = await sess.evaluate_dom(DETECT_HOME_JS)
             if isinstance(home_data, dict) and (
                 home_data.get("profileHref") or home_data.get("hasLoginPrompt")
             ):
@@ -1298,18 +1244,17 @@ async def _detect_account_async(cfg: dict, port_override: int | None):
                 "url": (home_data or {}).get("url"),
                 "browser": cfg["browser"],
                 "profile": cfg.get("profile"),
-                "message": "Akun X belum login di profil browser ini. Buka shortcut di Desktop lalu login sekali, setelah itu tutup jendelanya.",
+                "message": "Akun X belum login di profil terisolasi ini. Buka shortcut/launcher profil terpisah lalu login sekali dan tutup jendelanya.",
             }
 
         handle_clean = profile_href.strip("/").split("/")[0]
         handle = f"@{handle_clean}"
 
-        # Navigate to the user's profile page in the same hidden tab to read exact Display Name
         await sess.navigate(f"https://x.com/{handle_clean}")
         prof_info = None
         for _ in range(12):
             await asyncio.sleep(0.6)
-            prof_info = await sess.eval_js(DETECT_PROFILE_JS)
+            prof_info = await sess.evaluate_dom(DETECT_PROFILE_JS)
             if isinstance(prof_info, dict) and (
                 prof_info.get("userNameText")
                 or f"@{handle_clean}".lower() in (prof_info.get("title") or "").lower()
@@ -1362,7 +1307,6 @@ def detect_and_confirm_account(
 def cmd_connect(args):
     kind = args.browser.lower()
     if kind == "auto":
-        # Prefer already-installed browser in order: firefox (if Raid exists), brave, chrome, edge, firefox
         ff = resolve_browser_exe("firefox")
         ff_profiles = {p["name"].lower() for p in list_firefox_profiles()}
         selected = None
@@ -1435,7 +1379,7 @@ def cmd_connect(args):
         [
             "designate-browser",
             "--label",
-            f"{display} hidden background ({profile})",
+            f"{display} headless isolated ({profile})",
         ],
         cli_path=cli_path,
         db_path=db_path,
@@ -1464,7 +1408,7 @@ def cmd_connect(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Multi-browser hidden hub, Desktop shortcut creator, auto port takeover, and X account auto-detector."
+        description="Cross-OS isolated headless browser connector, launcher creator, and X account detector."
     )
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Browser config JSON path")
     parser.add_argument("--cli-path", default=str(DEFAULT_CLI_PATH), help="Workflow Rust CLI path")
@@ -1472,9 +1416,9 @@ def main():
 
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("list-browsers", help="Detect installed browsers, profiles, and active debug ports")
+    sub.add_parser("list-browsers", help="Detect installed browsers, isolated workspace profiles, and configured ports")
 
-    p_conn = sub.add_parser("connect", help="Connect to user's chosen browser, create isolated profile & shortcut, and auto-detect X user")
+    p_conn = sub.add_parser("connect", help="Connect chosen browser, create isolated profile & shortcut, and detect X user")
     p_conn.add_argument("--browser", default="auto", help="auto | firefox | brave | chrome | edge | custom")
     p_conn.add_argument("--profile", default=None, help="Profile name (default: Raid for Firefox, Agent for Chromium)")
     p_conn.add_argument("--exe-path", default=None, help="Custom browser executable path")
@@ -1488,14 +1432,14 @@ def main():
     p_sc = sub.add_parser("create-shortcut", help="Create/refresh Desktop shortcut/launcher (.lnk/.desktop/.command/.sh) for the connected browser")
     p_sc.add_argument("--no-repo-copy", action="store_true", help="Only create on user Desktop")
 
-    p_det = sub.add_parser("detect-account", help="Auto-detect logged-in X handle & display name in hidden background")
+    p_det = sub.add_parser("detect-account", help="Auto-detect logged-in X handle & display name in headless mode")
     p_det.add_argument("--port", type=int, default=None, help="Optional explicit debug port")
     p_det.add_argument("--no-confirm", action="store_true", help="Detect only without saving to SQLite")
 
     args = parser.parse_args()
 
     if args.cmd == "list-browsers":
-        print(json.dumps(discover_browsers(), indent=2, ensure_ascii=False))
+        print(json.dumps(discover_browsers(Path(args.config)), indent=2, ensure_ascii=False))
     elif args.cmd == "connect":
         cmd_connect(args)
     elif args.cmd == "create-shortcut":
