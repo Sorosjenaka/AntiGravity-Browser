@@ -47,7 +47,7 @@ enum Command {
     },
     /// List installed browsers (Firefox, Brave, Chrome, Edge), profiles, and active debug ports.
     ListBrowsers,
-    /// Connect to any chosen browser (Firefox/Brave/Chrome/Edge), create isolated Desktop shortcut, and auto-detect X user.
+    /// Connect to any chosen browser (Firefox/Brave/Chrome/Edge), create isolated shortcut/launcher, and auto-detect X user.
     ConnectBrowser {
         #[arg(long, default_value = "auto")]
         browser: String,
@@ -66,7 +66,7 @@ enum Command {
         #[arg(long)]
         no_detect: bool,
     },
-    /// Create or refresh Windows Desktop shortcut (.lnk) for the connected isolated browser profile.
+    /// Create or refresh Desktop shortcut/launcher (.lnk / .desktop / .command) for the connected isolated browser profile.
     CreateShortcut,
     /// Auto-detect logged-in X handle and display name in hidden background browser and save to DB.
     AutoDetectAccount {
@@ -143,9 +143,58 @@ fn find_browser_hub_script() -> Result<PathBuf> {
     );
 }
 
+fn resolve_python_bin(script_path: &Path) -> String {
+    let mut local_candidates: Vec<PathBuf> = Vec::new();
+    for root in script_path.ancestors().take(7) {
+        if root.as_os_str().is_empty() {
+            continue;
+        }
+        if cfg!(windows) {
+            local_candidates.push(root.join(".venv").join("Scripts").join("python.exe"));
+        } else {
+            local_candidates.push(root.join(".venv").join("bin").join("python3"));
+            local_candidates.push(root.join(".venv").join("bin").join("python"));
+        }
+    }
+    if cfg!(windows) {
+        local_candidates.push(PathBuf::from(".venv/Scripts/python.exe"));
+    } else {
+        local_candidates.push(PathBuf::from(".venv/bin/python3"));
+        local_candidates.push(PathBuf::from(".venv/bin/python"));
+    }
+    for cand in local_candidates {
+        if cand.exists() {
+            return cand.to_string_lossy().into_owned();
+        }
+    }
+
+    let names: &[&str] = if cfg!(windows) {
+        &["python", "python3"]
+    } else {
+        &["python3", "python"]
+    };
+    for name in names {
+        if let Ok(status) = ProcessCommand::new(name)
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            && status.success()
+        {
+            return (*name).to_owned();
+        }
+    }
+    if cfg!(windows) {
+        "python".to_owned()
+    } else {
+        "python3".to_owned()
+    }
+}
+
 fn run_browser_hub(db: &Path, sub_args: &[String]) -> Result<()> {
     let script = find_browser_hub_script()?;
-    let mut cmd = ProcessCommand::new("python");
+    let python_bin = resolve_python_bin(&script);
+    let mut cmd = ProcessCommand::new(&python_bin);
     cmd.arg(&script)
         .arg("--db")
         .arg(db);
@@ -155,7 +204,7 @@ fn run_browser_hub(db: &Path, sub_args: &[String]) -> Result<()> {
     cmd.args(sub_args);
     let status = cmd
         .status()
-        .with_context(|| format!("running python {}", script.display()))?;
+        .with_context(|| format!("running {python_bin} {}", script.display()))?;
     if !status.success() {
         bail!("browser_hub.py exited with status {status}");
     }

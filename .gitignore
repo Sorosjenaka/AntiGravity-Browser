@@ -5,6 +5,8 @@
 /browser_config.json
 /shortcuts/
 *.lnk
+*.desktop
+*.command
 /data/*.txt
 /data/*.json
 !/data/*.example.json

@@ -11,31 +11,34 @@ description: >-
 
 Use this skill whenever the user wants to connect a browser, create a Desktop shortcut, auto-detect their X account, or supply X (`x.com`) status URLs to read, draft, like, or reply.
 
-## Step 0: Browser Connection, Shortcut & X Account Auto-Detection
+## Step 0: Cross-OS Browser Connection, Shortcut/Launcher & X Account Auto-Detection
 
-Supported browsers: `firefox` (WebDriver BiDi), `brave`, `chrome`, `edge`, or `custom` (Chromium CDP).
+Supports **Windows**, **Linux Desktop / headless Linux VPS**, and **macOS**.
+Use `<CLI>` = `.\target\release\x-social-draft-workflow.exe` (Windows) or `./target/release/x-social-draft-workflow` (Linux/macOS), and `<PYTHON>` = `.venv/bin/python` / `python3` (Linux/macOS) or `python` (Windows).
+
+Supported browsers: `firefox` (WebDriver BiDi), `brave`, `chrome`, `edge`, or `custom` (Chromium CDP, including macOS `.app` bundles).
 
 - Inspect installed browsers, profiles, and active debug ports:
-  ```powershell
-  .\target\release\x-social-draft-workflow.exe list-browsers
+  ```bash
+  ./target/release/x-social-draft-workflow list-browsers
   ```
-- Connect to the user's chosen browser (creates isolated profile, generates Desktop `.lnk` shortcut, designates browser in SQLite, and auto-detects logged-in X user in hidden background):
-  ```powershell
-  .\target\release\x-social-draft-workflow.exe connect-browser --browser brave --profile Agent
+- Connect to the user's chosen browser (creates isolated profile, generates OS shortcut/launcher `.lnk`/`.desktop`/`.command`/`.sh`, designates browser in SQLite, and auto-detects logged-in X user in hidden background):
+  ```bash
+  ./target/release/x-social-draft-workflow connect-browser --browser brave --profile Agent
   ```
   (Replace `brave` with `firefox`, `chrome`, `edge`, or `auto`.)
 - Auto-detect logged-in X handle & display name in hidden background anytime:
-  ```powershell
-  .\target\release\x-social-draft-workflow.exe auto-detect-account
+  ```bash
+  ./target/release/x-social-draft-workflow auto-detect-account
   ```
-- Recreate/refresh Desktop `.lnk` shortcut:
-  ```powershell
-  .\target\release\x-social-draft-workflow.exe create-shortcut
+- Recreate/refresh OS shortcut/launcher:
+  ```bash
+  ./target/release/x-social-draft-workflow create-shortcut
   ```
 
 ### Port & Stealth Guarantees
 - `browser_hub.py` automatically detects active debug ports (`DevToolsActivePort`, configured port in `browser_config.json`, or `9222..9235`) and attaches to a background tab without activating/focusing user windows.
-- If no dedicated browser port is open, it allocates a free port automatically and spawns the isolated profile in hidden background (`-headless` / `--headless=new` + Windows `CREATE_NO_WINDOW` + `SW_HIDE`), never touching the user's active desktop browser.
+- If no dedicated browser port is open, it allocates a free port automatically and spawns the isolated profile in hidden background (`MOZ_HEADLESS=1` + `-headless` / `--headless=new`, `--disable-dev-shm-usage` on Linux VPS, Windows `CREATE_NO_WINDOW` + `SW_HIDE`, POSIX `start_new_session=True`), never touching the user's active desktop browser.
 
 ## Step 1: Pre-Flight Check
 
@@ -90,7 +93,7 @@ python -u .agents/skills/x-social-browser-workflow/scripts/engage_posts.py `
 
 `engage_posts.py` automatically uses the randomized `5.0–60.0`s multi-band anti-clustering delay algorithm (even if `--min-delay` / `--max-delay` are omitted), adds in-post micro-jitter, auto-reads/detects `@handle`, uses WebDriver BiDi or Chromium CDP events, verifies `liked` + `visibleOwnReply`, and closes its tab/headless browser cleanly.
 
-If running in a restricted runtime without browser execution, let the user run `.\run-plan.ps1` locally after `data/action_plan.json` is written.
+If running in a restricted runtime without browser execution, let the user run `.\run-plan.ps1` (Windows) or `./run-plan.sh` (Linux/VPS/macOS) locally after `data/action_plan.json` is written.
 
 ## Step 5: Confirm & Print Report in Indonesian
 

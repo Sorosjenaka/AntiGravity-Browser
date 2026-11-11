@@ -5,6 +5,7 @@ import json
 import os
 import random
 import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -16,59 +17,125 @@ from pathlib import Path
 
 import websockets
 
+
+def _platform_key() -> str:
+    if sys.platform.startswith("win"):
+        return "win32"
+    if sys.platform == "darwin":
+        return "darwin"
+    return "linux"
+
+
+def default_cli_path() -> Path:
+    name = "x-social-draft-workflow.exe" if _platform_key() == "win32" else "x-social-draft-workflow"
+    return Path("target/release") / name
+
+
 DEFAULT_CONFIG_PATH = Path("browser_config.json")
-DEFAULT_CLI_PATH = Path("target/release/x-social-draft-workflow.exe")
+DEFAULT_CLI_PATH = default_cli_path()
 
 BROWSER_META = {
     "firefox": {
         "display": "Mozilla Firefox",
         "engine": "bidi",
         "default_port": 9223,
-        "candidates": [
-            r"C:\Program Files\Mozilla Firefox\firefox.exe",
-            r"C:\Program Files (x86)\Mozilla Firefox\firefox.exe",
-        ],
-        "which": ["firefox"],
+        "candidates": {
+            "win32": [
+                r"C:\Program Files\Mozilla Firefox\firefox.exe",
+                r"C:\Program Files (x86)\Mozilla Firefox\firefox.exe",
+            ],
+            "linux": [
+                "/usr/bin/firefox",
+                "/usr/local/bin/firefox",
+                "/usr/bin/firefox-esr",
+                "/snap/bin/firefox",
+                "/var/lib/flatpak/exports/bin/org.mozilla.firefox",
+            ],
+            "darwin": [
+                "/Applications/Firefox.app/Contents/MacOS/firefox",
+                "{HOME}/Applications/Firefox.app/Contents/MacOS/firefox",
+            ],
+        },
+        "which": ["firefox", "firefox-esr"],
     },
     "brave": {
         "display": "Brave Browser",
         "engine": "cdp",
         "default_port": 9224,
-        "candidates": [
-            r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
-            r"C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe",
-            r"{LOCALAPPDATA}\BraveSoftware\Brave-Browser\Application\brave.exe",
-        ],
-        "which": ["brave", "brave-browser"],
+        "candidates": {
+            "win32": [
+                r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
+                r"C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe",
+                r"{LOCALAPPDATA}\BraveSoftware\Brave-Browser\Application\brave.exe",
+            ],
+            "linux": [
+                "/usr/bin/brave-browser",
+                "/usr/bin/brave-browser-stable",
+                "/opt/brave.com/brave/brave-browser",
+                "/opt/brave.com/brave/brave",
+                "/snap/bin/brave",
+            ],
+            "darwin": [
+                "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+                "{HOME}/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+            ],
+        },
+        "which": ["brave-browser", "brave-browser-stable", "brave"],
     },
     "chrome": {
         "display": "Google Chrome",
         "engine": "cdp",
         "default_port": 9222,
-        "candidates": [
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-            r"{LOCALAPPDATA}\Google\Chrome\Application\chrome.exe",
-        ],
-        "which": ["chrome", "google-chrome", "chromium"],
+        "candidates": {
+            "win32": [
+                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                r"{LOCALAPPDATA}\Google\Chrome\Application\chrome.exe",
+            ],
+            "linux": [
+                "/usr/bin/google-chrome",
+                "/usr/bin/google-chrome-stable",
+                "/opt/google/chrome/chrome",
+                "/usr/bin/chromium",
+                "/usr/bin/chromium-browser",
+                "/snap/bin/chromium",
+            ],
+            "darwin": [
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                "{HOME}/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                "/Applications/Chromium.app/Contents/MacOS/Chromium",
+            ],
+        },
+        "which": ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"],
     },
     "edge": {
         "display": "Microsoft Edge",
         "engine": "cdp",
         "default_port": 9225,
-        "candidates": [
-            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-            r"{LOCALAPPDATA}\Microsoft\Edge\Application\msedge.exe",
-        ],
-        "which": ["msedge", "edge"],
+        "candidates": {
+            "win32": [
+                r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+                r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+                r"{LOCALAPPDATA}\Microsoft\Edge\Application\msedge.exe",
+            ],
+            "linux": [
+                "/usr/bin/microsoft-edge",
+                "/usr/bin/microsoft-edge-stable",
+                "/opt/microsoft/msedge/msedge",
+            ],
+            "darwin": [
+                "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+                "{HOME}/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+            ],
+        },
+        "which": ["microsoft-edge", "microsoft-edge-stable", "msedge", "edge"],
     },
 }
 
 
 def hidden_popen_kwargs() -> dict:
     if os.name != "nt":
-        return {}
+        return {"start_new_session": True}
     si = subprocess.STARTUPINFO()
     si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     si.wShowWindow = 0
@@ -124,17 +191,41 @@ def compute_random_delay(
 
 def expand_candidate(path_tmpl: str) -> Path:
     local_app = os.environ.get("LOCALAPPDATA", "")
-    return Path(path_tmpl.replace("{LOCALAPPDATA}", local_app))
+    appdata = os.environ.get("APPDATA", "")
+    home = str(Path.home())
+    return Path(
+        path_tmpl.replace("{LOCALAPPDATA}", local_app)
+        .replace("{APPDATA}", appdata)
+        .replace("{HOME}", home)
+    )
+
+
+def _resolve_macos_app_binary(app_path: Path) -> str | None:
+    if app_path.suffix == ".app" and app_path.is_dir():
+        macos_dir = app_path / "Contents" / "MacOS"
+        stem_bin = macos_dir / app_path.stem
+        if stem_bin.exists() and stem_bin.is_file():
+            return str(stem_bin)
+        if macos_dir.is_dir():
+            for child in sorted(macos_dir.iterdir()):
+                if child.is_file() and os.access(child, os.X_OK):
+                    return str(child)
+    return None
 
 
 def resolve_browser_exe(kind: str, override: str | None = None) -> str | None:
     if override:
         p = Path(override)
+        app_bin = _resolve_macos_app_binary(p)
+        if app_bin:
+            return app_bin
         return str(p) if p.exists() else shutil.which(override)
     meta = BROWSER_META.get(kind)
     if not meta:
         return None
-    for tmpl in meta["candidates"]:
+    raw_cands = meta["candidates"]
+    cand_list = raw_cands.get(_platform_key(), []) if isinstance(raw_cands, dict) else raw_cands
+    for tmpl in cand_list:
         p = expand_candidate(tmpl)
         if p.exists():
             return str(p)
@@ -145,23 +236,44 @@ def resolve_browser_exe(kind: str, override: str | None = None) -> str | None:
     return None
 
 
+def firefox_profile_ini_paths() -> list[Path]:
+    plat = _platform_key()
+    home = Path.home()
+    if plat == "win32":
+        appdata = os.environ.get("APPDATA") or str(home / "AppData" / "Roaming")
+        return [Path(appdata) / "Mozilla" / "Firefox" / "profiles.ini"]
+    if plat == "darwin":
+        return [home / "Library" / "Application Support" / "Firefox" / "profiles.ini"]
+    return [
+        home / ".mozilla" / "firefox" / "profiles.ini",
+        home / "snap" / "firefox" / "common" / ".mozilla" / "firefox" / "profiles.ini",
+        home / ".var" / "app" / "org.mozilla.firefox" / ".mozilla" / "firefox" / "profiles.ini",
+    ]
+
+
 def list_firefox_profiles() -> list[dict]:
-    appdata = os.environ.get("APPDATA", "")
-    ini_path = Path(appdata) / "Mozilla" / "Firefox" / "profiles.ini"
     out = []
-    if not ini_path.exists():
-        return out
-    cp = configparser.ConfigParser()
-    cp.read(ini_path, encoding="utf-8")
-    for sec in cp.sections():
-        if sec.startswith("Profile") and cp.has_option(sec, "Name"):
-            out.append(
-                {
-                    "name": cp.get(sec, "Name"),
-                    "path": cp.get(sec, "Path", fallback=""),
-                    "is_default": cp.get(sec, "Default", fallback="0") == "1",
-                }
-            )
+    seen = set()
+    for ini_path in firefox_profile_ini_paths():
+        if not ini_path.exists():
+            continue
+        cp = configparser.ConfigParser()
+        cp.read(ini_path, encoding="utf-8")
+        for sec in cp.sections():
+            if sec.startswith("Profile") and cp.has_option(sec, "Name"):
+                name = cp.get(sec, "Name")
+                key = name.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(
+                    {
+                        "name": name,
+                        "path": cp.get(sec, "Path", fallback=""),
+                        "is_default": cp.get(sec, "Default", fallback="0") == "1",
+                        "ini_dir": str(ini_path.parent),
+                    }
+                )
     return out
 
 
@@ -185,9 +297,45 @@ def list_chromium_profiles(user_data_dir: Path) -> list[dict]:
     return out
 
 
+def default_chromium_user_data_dirs() -> dict[str, list[Path]]:
+    plat = _platform_key()
+    home = Path.home()
+    if plat == "win32":
+        local_app = Path(os.environ.get("LOCALAPPDATA") or str(home / "AppData" / "Local"))
+        return {
+            "brave": [local_app / "BraveSoftware" / "Brave-Browser" / "User Data"],
+            "chrome": [local_app / "Google" / "Chrome" / "User Data"],
+            "edge": [local_app / "Microsoft" / "Edge" / "User Data"],
+        }
+    if plat == "darwin":
+        app_sup = home / "Library" / "Application Support"
+        return {
+            "brave": [app_sup / "BraveSoftware" / "Brave-Browser"],
+            "chrome": [app_sup / "Google" / "Chrome", app_sup / "Chromium"],
+            "edge": [app_sup / "Microsoft Edge"],
+        }
+    cfg_home = Path(os.environ.get("XDG_CONFIG_HOME") or str(home / ".config"))
+    return {
+        "brave": [cfg_home / "BraveSoftware" / "Brave-Browser"],
+        "chrome": [
+            cfg_home / "google-chrome",
+            cfg_home / "chromium",
+            home / "snap" / "chromium" / "common" / "chromium",
+        ],
+        "edge": [cfg_home / "microsoft-edge"],
+    }
+
+
 def agent_profiles_root() -> Path:
-    base = os.environ.get("LOCALAPPDATA") or str(Path.home() / ".local" / "share")
-    return Path(base) / "AntiGravity-Browser" / "profiles"
+    plat = _platform_key()
+    home = Path.home()
+    if plat == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA") or str(home / "AppData" / "Local"))
+    elif plat == "darwin":
+        base = home / "Library" / "Application Support"
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME") or str(home / ".local" / "share"))
+    return base / "AntiGravity-Browser" / "profiles"
 
 
 def sanitize_slug(value: str) -> str:
@@ -322,21 +470,18 @@ def scan_active_debug_ports(
 
 def discover_browsers() -> dict:
     browsers = {}
-    local_app = Path(os.environ.get("LOCALAPPDATA", ""))
-    default_ud_dirs = {
-        "brave": local_app / "BraveSoftware" / "Brave-Browser" / "User Data",
-        "chrome": local_app / "Google" / "Chrome" / "User Data",
-        "edge": local_app / "Microsoft" / "Edge" / "User Data",
-    }
+    default_ud_dirs = default_chromium_user_data_dirs()
     for kind, meta in BROWSER_META.items():
         exe = resolve_browser_exe(kind)
         profiles = []
         if kind == "firefox":
             profiles = list_firefox_profiles()
         else:
-            ud = default_ud_dirs.get(kind)
-            if ud and ud.exists():
-                profiles = list_chromium_profiles(ud)
+            for ud in default_ud_dirs.get(kind, []):
+                if ud and ud.exists():
+                    profiles = list_chromium_profiles(ud)
+                    if profiles:
+                        break
         browsers[kind] = {
             "display": meta["display"],
             "engine": meta["engine"],
@@ -351,6 +496,7 @@ def discover_browsers() -> dict:
         agent_dirs = [str(p) for p in sorted(root.iterdir()) if p.is_dir()]
 
     return {
+        "platform": _platform_key(),
         "browsers": browsers,
         "agent_isolated_profiles": agent_dirs,
         "active_debug_ports": scan_active_debug_ports(),
@@ -409,101 +555,258 @@ def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
     )
 
 
-def build_shortcut_spec(cfg: dict) -> tuple[str, str, str]:
-    kind = cfg["browser"]
-    profile = cfg.get("profile", "Agent")
+def build_browser_launch_args(cfg: dict) -> tuple[str, list[str]]:
     exe = cfg["executable"]
+    profile = cfg.get("profile", "Agent")
     port = int(cfg.get("port") or 9223)
     if cfg["engine"] == "bidi":
-        args = (
-            f'-no-remote -P "{profile}" '
-            f'--remote-debugging-port {port} '
-            f'--remote-allow-hosts localhost,127.0.0.1 '
-            f'--remote-allow-origins http://127.0.0.1:{port} '
-            f'https://x.com/home'
-        )
+        args_list = [
+            "-no-remote",
+            "-P",
+            profile,
+            "--remote-debugging-port",
+            str(port),
+            "--remote-allow-hosts",
+            "localhost,127.0.0.1",
+            "--remote-allow-origins",
+            f"http://127.0.0.1:{port}",
+            "https://x.com/home",
+        ]
     else:
         ud = cfg["user_data_dir"]
         pdir = cfg.get("profile_directory", "Default")
-        args = (
-            f'--user-data-dir="{ud}" '
-            f'--profile-directory="{pdir}" '
-            f'--remote-debugging-port={port} '
-            f'--remote-allow-origins=* '
-            f'--no-first-run --no-default-browser-check '
-            f'https://x.com/home'
-        )
-    short_name = f"AntiGravity X ({kind.capitalize()} - {profile}).lnk"
+        args_list = [
+            f"--user-data-dir={ud}",
+            f"--profile-directory={pdir}",
+            f"--remote-debugging-port={port}",
+            "--remote-allow-origins=*",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "https://x.com/home",
+        ]
+    return exe, args_list
+
+
+def build_shortcut_spec(cfg: dict) -> tuple[str, str, str]:
+    kind = cfg["browser"]
+    profile = cfg.get("profile", "Agent")
+    exe, args_list = build_browser_launch_args(cfg)
+    if _platform_key() == "win32":
+        if cfg["engine"] == "bidi":
+            args = (
+                f'-no-remote -P "{profile}" '
+                f'--remote-debugging-port {int(cfg.get("port") or 9223)} '
+                f'--remote-allow-hosts localhost,127.0.0.1 '
+                f'--remote-allow-origins http://127.0.0.1:{int(cfg.get("port") or 9223)} '
+                f'https://x.com/home'
+            )
+        else:
+            ud = cfg["user_data_dir"]
+            pdir = cfg.get("profile_directory", "Default")
+            port = int(cfg.get("port") or 9224)
+            args = (
+                f'--user-data-dir="{ud}" '
+                f'--profile-directory="{pdir}" '
+                f'--remote-debugging-port={port} '
+                f'--remote-allow-origins=* '
+                f'--no-first-run --no-default-browser-check '
+                f'https://x.com/home'
+            )
+        short_name = f"AntiGravity X ({kind.capitalize()} - {profile}).lnk"
+    elif _platform_key() == "darwin":
+        args = " ".join(shlex.quote(a) for a in args_list)
+        short_name = f"AntiGravity X ({kind.capitalize()} - {profile}).command"
+    else:
+        args = " ".join(shlex.quote(a) for a in args_list)
+        short_name = f"AntiGravity X ({kind.capitalize()} - {profile}).desktop"
     return short_name, exe, args
 
 
-def create_windows_shortcut(cfg: dict, also_repo_dir: bool = True) -> dict:
-    short_name, target_exe, args = build_shortcut_spec(cfg)
-    desktop_dir = Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Desktop"
+def _write_unix_executable(path: Path, content: str):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content.encode("utf-8"))
     try:
-        # Respect localized or redirected Windows Desktop path via Shell
-        res = subprocess.run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "[Environment]::GetFolderPath('Desktop')",
-            ],
-            capture_output=True,
-            text=True,
-            **hidden_popen_kwargs(),
-        )
-        if res.returncode == 0 and res.stdout.strip():
-            desktop_dir = Path(res.stdout.strip())
-    except Exception:
+        os.chmod(path, 0o755)
+    except OSError:
         pass
 
-    targets = [desktop_dir / short_name]
-    if also_repo_dir:
-        repo_short_dir = Path("shortcuts")
-        repo_short_dir.mkdir(parents=True, exist_ok=True)
-        targets.append((repo_short_dir / short_name).resolve())
 
-    def ps_quote(val: str) -> str:
-        return "'" + val.replace("'", "''") + "'"
+def create_shortcut(cfg: dict, also_repo_dir: bool = True) -> dict:
+    plat = _platform_key()
+    kind = cfg["browser"]
+    profile = cfg.get("profile", "Agent")
+    short_name, target_exe, args = build_shortcut_spec(cfg)
+    _, args_list = build_browser_launch_args(cfg)
 
-    import base64
+    if plat == "win32":
+        desktop_dir = Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Desktop"
+        try:
+            # Respect localized or redirected Windows Desktop path via Shell
+            res = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "[Environment]::GetFolderPath('Desktop')",
+                ],
+                capture_output=True,
+                text=True,
+                **hidden_popen_kwargs(),
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                desktop_dir = Path(res.stdout.strip())
+        except Exception:
+            pass
 
+        targets = [desktop_dir / short_name]
+        if also_repo_dir:
+            repo_short_dir = Path("shortcuts")
+            repo_short_dir.mkdir(parents=True, exist_ok=True)
+            targets.append((repo_short_dir / short_name).resolve())
+
+        def ps_quote(val: str) -> str:
+            return "'" + val.replace("'", "''") + "'"
+
+        import base64
+
+        created = []
+        for lnk in targets:
+            lnk.parent.mkdir(parents=True, exist_ok=True)
+            ps = (
+                "$ws = New-Object -ComObject WScript.Shell; "
+                f"$sc = $ws.CreateShortcut({ps_quote(str(lnk))}); "
+                f"$sc.TargetPath = {ps_quote(str(target_exe))}; "
+                f"$sc.Arguments = {ps_quote(args)}; "
+                f"$sc.WorkingDirectory = {ps_quote(str(Path(target_exe).parent))}; "
+                f"$sc.Description = {ps_quote('Profil terpisah X AntiGravity (tidak mengganggu browser kerja utama)')}; "
+                "$sc.Save()"
+            )
+            encoded = base64.b64encode(ps.encode("utf-16-le")).decode("ascii")
+            subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                **hidden_popen_kwargs(),
+            )
+            created.append(str(lnk))
+
+        return {
+            "platform": plat,
+            "shortcut_name": short_name,
+            "desktop_shortcut": created[0] if created else None,
+            "all_shortcuts": created,
+            "arguments": args,
+        }
+
+    slug = f"{sanitize_slug(kind).lower()}-{sanitize_slug(profile).lower()}"
+    cmd_line = " ".join(shlex.quote(a) for a in [str(target_exe), *args_list])
+    shell_script = (
+        "#!/usr/bin/env bash\n"
+        f"# Profil terpisah X AntiGravity ({kind} - {profile})\n"
+        f"nohup {cmd_line} >/dev/null 2>&1 &\n"
+    )
+
+    repo_short_dir = Path("shortcuts")
+    shell_path = None
     created = []
-    for lnk in targets:
-        lnk.parent.mkdir(parents=True, exist_ok=True)
-        ps = (
-            "$ws = New-Object -ComObject WScript.Shell; "
-            f"$sc = $ws.CreateShortcut({ps_quote(str(lnk))}); "
-            f"$sc.TargetPath = {ps_quote(str(target_exe))}; "
-            f"$sc.Arguments = {ps_quote(args)}; "
-            f"$sc.WorkingDirectory = {ps_quote(str(Path(target_exe).parent))}; "
-            f"$sc.Description = {ps_quote('Profil terpisah X AntiGravity (tidak mengganggu browser kerja utama)')}; "
-            "$sc.Save()"
-        )
-        encoded = base64.b64encode(ps.encode("utf-16-le")).decode("ascii")
-        subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-            **hidden_popen_kwargs(),
-        )
-        created.append(str(lnk))
+
+    if also_repo_dir:
+        shell_path = (repo_short_dir / f"antigravity-x-{slug}.sh").resolve()
+        _write_unix_executable(shell_path, shell_script)
+        created.append(str(shell_path))
+
+    if plat == "darwin":
+        desktop_dir = Path.home() / "Desktop"
+        desktop_file = None
+        if desktop_dir.is_dir():
+            df = desktop_dir / short_name
+            _write_unix_executable(df, shell_script)
+            desktop_file = str(df)
+            created.insert(0, desktop_file)
+        if also_repo_dir:
+            repo_cmd = (repo_short_dir / short_name).resolve()
+            _write_unix_executable(repo_cmd, shell_script)
+            created.append(str(repo_cmd))
+        return {
+            "platform": plat,
+            "shortcut_name": short_name,
+            "desktop_shortcut": desktop_file or (str(shell_path) if shell_path else None),
+            "shell_launcher": str(shell_path) if shell_path else None,
+            "all_shortcuts": created,
+            "arguments": args,
+        }
+
+    # Linux Desktop + headless VPS compatible (.desktop + .sh)
+    def desktop_exec_token(val: str) -> str:
+        if any(ch in val for ch in (' ', '\t', '"', '\\')):
+            escaped = val.replace("\\", "\\\\").replace('"', '\\"')
+            return f'"{escaped}"'
+        return val
+
+    exec_line = " ".join(desktop_exec_token(a) for a in [str(target_exe), *args_list])
+    desktop_entry = (
+        "[Desktop Entry]\n"
+        "Version=1.0\n"
+        "Type=Application\n"
+        f"Name=AntiGravity X ({kind.capitalize()} - {profile})\n"
+        "Comment=Profil terpisah X AntiGravity (tidak mengganggu browser kerja utama)\n"
+        f"Exec={exec_line}\n"
+        "Terminal=false\n"
+        "Categories=Network;WebBrowser;\n"
+    )
+
+    desktop_file = None
+    linux_desktop = Path.home() / "Desktop"
+    if linux_desktop.is_dir():
+        df = linux_desktop / short_name
+        _write_unix_executable(df, desktop_entry)
+        desktop_file = str(df)
+        created.insert(0, desktop_file)
+
+    apps_dir = Path(os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")) / "applications"
+    app_entry = apps_dir / f"antigravity-x-{slug}.desktop"
+    _write_unix_executable(app_entry, desktop_entry)
+    created.append(str(app_entry))
+
+    if also_repo_dir:
+        repo_desk = (repo_short_dir / short_name).resolve()
+        _write_unix_executable(repo_desk, desktop_entry)
+        created.append(str(repo_desk))
 
     return {
+        "platform": plat,
         "shortcut_name": short_name,
-        "desktop_shortcut": created[0] if created else None,
+        "desktop_shortcut": desktop_file or (str(shell_path) if shell_path else str(app_entry)),
+        "shell_launcher": str(shell_path) if shell_path else None,
         "all_shortcuts": created,
         "arguments": args,
     }
 
 
+create_windows_shortcut = create_shortcut
+
+
+def _resolve_cli_exe(cli_path: Path) -> Path | None:
+    candidates = [cli_path]
+    if _platform_key() == "win32":
+        if cli_path.suffix != ".exe":
+            candidates.append(cli_path.with_suffix(".exe"))
+    else:
+        if cli_path.suffix == ".exe":
+            candidates.append(cli_path.with_suffix(""))
+    candidates.append(default_cli_path())
+    for c in candidates:
+        if c.exists():
+            return c
+    return None
+
+
 def run_workflow_cli(args: list[str], cli_path: Path = DEFAULT_CLI_PATH, db_path: Path | None = None) -> str:
-    exe = cli_path
-    if not exe.exists():
+    exe = _resolve_cli_exe(cli_path)
+    if exe is None:
         # Fall back to cargo run if release binary was not built yet
         cmd = ["cargo", "run", "--quiet", "--"]
     else:
@@ -800,6 +1103,15 @@ class _CDPSession:
                 self.proc.terminate()
 
 
+def _default_user_agent() -> str:
+    plat = _platform_key()
+    if plat == "darwin":
+        return "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+    if plat == "linux":
+        return "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+    return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+
+
 def _start_hidden_process(cfg: dict, port: int) -> tuple[subprocess.Popen, str]:
     exe = cfg["executable"]
     if not Path(exe).exists() and not shutil.which(exe):
@@ -846,22 +1158,26 @@ def _start_hidden_process(cfg: dict, port: int) -> tuple[subprocess.Popen, str]:
     ud = Path(cfg["user_data_dir"])
     ud.mkdir(parents=True, exist_ok=True)
     pdir = cfg.get("profile_directory", "Default")
+    cmd = [
+        exe,
+        "--headless=new",
+        "--disable-gpu",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-blink-features=AutomationControlled",
+        f"--user-agent={_default_user_agent()}",
+        "--window-position=-32000,-32000",
+        f"--user-data-dir={ud}",
+        f"--profile-directory={pdir}",
+        f"--remote-debugging-port={port}",
+        "--remote-allow-origins=*",
+    ]
+    if _platform_key() == "linux":
+        cmd.append("--disable-dev-shm-usage")
+    cmd.append("about:blank")
+
     proc = subprocess.Popen(
-        [
-            exe,
-            "--headless=new",
-            "--disable-gpu",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--disable-blink-features=AutomationControlled",
-            "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
-            "--window-position=-32000,-32000",
-            f"--user-data-dir={ud}",
-            f"--profile-directory={pdir}",
-            f"--remote-debugging-port={port}",
-            "--remote-allow-origins=*",
-            "about:blank",
-        ],
+        cmd,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         **hidden_popen_kwargs(),
@@ -1049,28 +1365,36 @@ def cmd_connect(args):
         # Prefer already-installed browser in order: firefox (if Raid exists), brave, chrome, edge, firefox
         ff = resolve_browser_exe("firefox")
         ff_profiles = {p["name"].lower() for p in list_firefox_profiles()}
+        selected = None
         if ff and "raid" in ff_profiles:
-            kind = "firefox"
+            selected = "firefox"
         else:
             for cand in ("brave", "chrome", "edge", "firefox"):
                 if resolve_browser_exe(cand):
-                    kind = cand
+                    selected = cand
                     break
+        if not selected:
+            raise FileNotFoundError(
+                "Tidak ada browser (Firefox/Brave/Chrome/Edge) yang terdeteksi di perangkat ini. "
+                "Install salah satu browser atau pakai --browser custom --exe-path <path>."
+            )
+        kind = selected
 
     if kind == "custom":
         if not args.exe_path:
             raise ValueError("--exe-path wajib diisi jika --browser custom")
-        exe = args.exe_path
+        custom_path = Path(args.exe_path)
+        exe = _resolve_macos_app_binary(custom_path) or args.exe_path
         engine = args.engine or "cdp"
         default_port = 9224 if engine == "cdp" else 9223
-        display = Path(exe).stem
+        display = custom_path.stem
     else:
         if kind not in BROWSER_META:
             raise ValueError(f"Browser tidak dikenal: {kind}. Pilih: auto, firefox, brave, chrome, edge, custom")
         meta = BROWSER_META[kind]
         exe = resolve_browser_exe(kind, args.exe_path)
         if not exe:
-            raise FileNotFoundError(f"Browser {meta['display']} tidak ditemukan di PC ini.")
+            raise FileNotFoundError(f"Browser {meta['display']} tidak ditemukan di perangkat ini.")
         engine = meta["engine"]
         default_port = meta["default_port"]
         display = meta["display"]
@@ -1101,7 +1425,7 @@ def cmd_connect(args):
 
     shortcut_info = None
     if not args.no_shortcut:
-        shortcut_info = create_windows_shortcut(cfg, also_repo_dir=True)
+        shortcut_info = create_shortcut(cfg, also_repo_dir=True)
         cfg["shortcut"] = shortcut_info.get("desktop_shortcut")
         cfg_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -1161,8 +1485,8 @@ def main():
     p_conn.add_argument("--no-shortcut", action="store_true", help="Skip creating Desktop shortcut")
     p_conn.add_argument("--no-detect", action="store_true", help="Skip X account auto-detection")
 
-    p_sc = sub.add_parser("create-shortcut", help="Create/refresh Windows Desktop shortcut for the connected browser")
-    p_sc.add_argument("--no-repo-copy", action="store_true", help="Only create on Desktop")
+    p_sc = sub.add_parser("create-shortcut", help="Create/refresh Desktop shortcut/launcher (.lnk/.desktop/.command/.sh) for the connected browser")
+    p_sc.add_argument("--no-repo-copy", action="store_true", help="Only create on user Desktop")
 
     p_det = sub.add_parser("detect-account", help="Auto-detect logged-in X handle & display name in hidden background")
     p_det.add_argument("--port", type=int, default=None, help="Optional explicit debug port")
@@ -1176,7 +1500,7 @@ def main():
         cmd_connect(args)
     elif args.cmd == "create-shortcut":
         cfg = load_config(Path(args.config))
-        res = create_windows_shortcut(cfg, also_repo_dir=not args.no_repo_copy)
+        res = create_shortcut(cfg, also_repo_dir=not args.no_repo_copy)
         print(json.dumps(res, indent=2, ensure_ascii=False))
     elif args.cmd == "detect-account":
         cfg = load_config(Path(args.config))
