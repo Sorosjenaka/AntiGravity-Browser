@@ -15,6 +15,13 @@ Alur kerja otomatis X (Twitter) berbasis AI Agent (**Antigravity**, **Gemini**, 
 
 ---
 
+## Saran Pengaturan Terbaik (Rekomendasi)
+
+- **Aplikasi yang Disarankan:** Gunakan **Antigravity Desktop** ataupun **Antigravity CLI** (`agy`), agar aturan workspace (`AGENTS.md`, `GEMINI.md`, dan skill lokal) langsung terbaca otomatis sejak awal.
+- **Model yang Disarankan:** Pilih model **`Gemini 3.8 Flash`** (`Gemini 3.8Flash`) supaya eksekusi baca link, pembuatan draft Bahasa Inggris tanpa tanda tanya, kontrol browser headless, dan pelaporan berjalan cepat serta hemat kuota.
+
+---
+
 ## 1. Cara Install Cepat (1 Menit)
 
 Buka PowerShell, clone repo ini, lalu jalankan `setup.ps1` dengan browser pilihan kamu:
