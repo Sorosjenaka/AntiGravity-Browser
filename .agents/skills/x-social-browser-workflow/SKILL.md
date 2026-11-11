@@ -90,6 +90,8 @@ python -u .agents/skills/x-social-browser-workflow/scripts/engage_posts.py `
 
 `engage_posts.py` automatically uses the randomized `5.0–60.0`s multi-band anti-clustering delay algorithm (even if `--min-delay` / `--max-delay` are omitted), adds in-post micro-jitter, auto-reads/detects `@handle`, uses WebDriver BiDi or Chromium CDP events, verifies `liked` + `visibleOwnReply`, and closes its tab/headless browser cleanly.
 
+If running in a restricted runtime without browser execution, let the user run `.\run-plan.ps1` locally after `data/action_plan.json` is written.
+
 ## Step 5: Confirm & Print Report in Indonesian
 
 For verified rows (`"liked": true` and `"replied": true`):

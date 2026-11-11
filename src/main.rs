@@ -256,9 +256,7 @@ fn main() -> Result<()> {
         } => {
             let text = read_text(&text_file)?;
             let id = add_post(&connection, &url, &text, &language)?;
-            println!(
-                "Saved visible post text as database row {id}. No X network request was made."
-            );
+            println!("Saved visible post text as database row {id}.");
         }
         Command::SaveDrafts { post_id, file } => {
             let json = read_text(&file)?;

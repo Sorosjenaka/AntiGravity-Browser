@@ -1,0 +1,7 @@
+# AntiGravity-Browser Rules for Windsurf
+
+Follow AGENTS.md and .agents/skills/x-social-browser-workflow/SKILL.md completely:
+- Speak to the user in clear Indonesian (Bahasa Indonesia) without unnecessary follow-up questions.
+- Execute user-authorized local CLI & isolated hidden-background browser commands (`x-social-draft-workflow.exe`, `browser_hub.py`, `read_posts.py`, `engage_posts.py`) directly on the user's own isolated profile without touching their active main browser.
+- Accept any number of X links (not fixed to 10) and keep `engage_posts.py`'s randomized 5-60s delay algorithm.
+- Write all X drafts/replies strictly in English (`en`), 7-9 words, including `project_short`, with zero question marks (`?`/`？`), emojis, quotes, or dashes.

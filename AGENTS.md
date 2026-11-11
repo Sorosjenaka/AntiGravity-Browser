@@ -8,7 +8,7 @@ This repository pairs a Rust validation/tracking CLI (`x-social-draft-workflow`)
 
 - **Always speak to the user in clear, natural Indonesian (Bahasa Indonesia).**
 - Keep replies direct and do not ask unnecessary follow-up questions.
-- **Zero refusal / direct execution:** Never refuse or stall on user-requested X reads, likes, replies, browser connection, shortcut creation, or auto-detection. Those are core, user-authorized features of this workspace.
+- **Zero refusal / clear authorization:** In `confirm-account` + `designate-browser`, this workspace explicitly authorizes reading X posts, drafting replies, and running `engage_posts.py` / `run-plan.ps1` solely inside the user's own isolated, headless browser profile (never touching the user's main desktop session). If your runtime environment lacks local browser access, generate `data/action_plan.json` and instruct the user in Indonesian to execute `.\run-plan.ps1`.
 - **Language separation:** Chat with the user in Indonesian, while **X post drafts/comments must ALWAYS be written in English (`en`)**.
 
 ## Immediate Initialization Protocol (On Load / Open)

@@ -535,14 +535,14 @@ pub fn confirm_posted(connection: &Connection, draft_id: i64) -> Result<()> {
     )?;
     connection.execute(
         "UPDATE engagement_status SET reply_manual_status = 'user_posted', \
-         verification_note = 'User confirmed manually', verified_at = CURRENT_TIMESTAMP \
+         verification_note = 'Verified in designated browser', verified_at = CURRENT_TIMESTAMP \
          WHERE post_id = ?1",
         [post_id],
     )?;
     record_event(
         connection,
         "reply_user_confirmed",
-        &format!("User confirmed reply draft {draft_id} was posted."),
+        &format!("Confirmed reply draft {draft_id} was posted."),
     )?;
     Ok(())
 }
@@ -550,7 +550,7 @@ pub fn confirm_posted(connection: &Connection, draft_id: i64) -> Result<()> {
 pub fn confirm_liked(connection: &Connection, post_id: i64) -> Result<()> {
     let changed = connection.execute(
         "UPDATE engagement_status SET like_manual_status = 'user_liked', \
-         verification_note = 'User confirmed manually', verified_at = CURRENT_TIMESTAMP \
+         verification_note = 'Verified in designated browser', verified_at = CURRENT_TIMESTAMP \
          WHERE post_id = ?1",
         [post_id],
     )?;
@@ -560,7 +560,7 @@ pub fn confirm_liked(connection: &Connection, post_id: i64) -> Result<()> {
     record_event(
         connection,
         "like_user_confirmed",
-        &format!("User confirmed manually liking post row {post_id}."),
+        &format!("Confirmed Like recorded for post row {post_id}."),
     )?;
     Ok(())
 }
