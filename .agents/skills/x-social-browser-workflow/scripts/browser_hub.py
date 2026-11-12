@@ -470,22 +470,19 @@ def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
 
 
 def build_browser_launch_args(cfg: dict) -> tuple[str, list[str]]:
+    """
+    Build clean GUI login arguments WITHOUT debug ports/flags so X login never
+    flags the interactive browser window at the username/password prompt.
+    Headless automation enables its loopback debug port only in _start_headless_process().
+    """
     exe = cfg["executable"]
     profile = cfg.get("profile", "Agent")
-    port = int(cfg.get("port") or 9223)
-    origin = f"http://127.0.0.1:{port}"
     if cfg["engine"] == "bidi":
         args_list = [
             "-no-remote",
             "-P",
             profile,
-            "--remote-debugging-port",
-            str(port),
-            "--remote-allow-hosts",
-            "localhost,127.0.0.1",
-            "--remote-allow-origins",
-            origin,
-            "https://x.com/home",
+            "https://x.com",
         ]
     else:
         ud = cfg["user_data_dir"]
@@ -493,11 +490,9 @@ def build_browser_launch_args(cfg: dict) -> tuple[str, list[str]]:
         args_list = [
             f"--user-data-dir={ud}",
             f"--profile-directory={pdir}",
-            f"--remote-debugging-port={port}",
-            f"--remote-allow-origins={origin}",
             "--no-first-run",
             "--no-default-browser-check",
-            "https://x.com/home",
+            "https://x.com",
         ]
     return exe, args_list
 
@@ -506,27 +501,17 @@ def build_shortcut_spec(cfg: dict) -> tuple[str, str, str]:
     kind = cfg["browser"]
     profile = cfg.get("profile", "Agent")
     exe, args_list = build_browser_launch_args(cfg)
-    port = int(cfg.get("port") or 9223)
-    origin = f"http://127.0.0.1:{port}"
     if _platform_key() == "win32":
         if cfg["engine"] == "bidi":
-            args = (
-                f'-no-remote -P "{profile}" '
-                f'--remote-debugging-port {port} '
-                f'--remote-allow-hosts localhost,127.0.0.1 '
-                f'--remote-allow-origins {origin} '
-                f'https://x.com/home'
-            )
+            args = f'-no-remote -P "{profile}" https://x.com'
         else:
             ud = cfg["user_data_dir"]
             pdir = cfg.get("profile_directory", "Default")
             args = (
                 f'--user-data-dir="{ud}" '
                 f'--profile-directory="{pdir}" '
-                f'--remote-debugging-port={port} '
-                f'--remote-allow-origins={origin} '
                 f'--no-first-run --no-default-browser-check '
-                f'https://x.com/home'
+                f'https://x.com'
             )
         short_name = f"AntiGravity X ({kind.capitalize()} - {profile}).lnk"
     elif _platform_key() == "darwin":
@@ -1239,12 +1224,22 @@ async def _detect_account_async(cfg: dict, port_override: int | None):
 
         profile_href = (home_data or {}).get("profileHref")
         if not profile_href or home_data.get("hasLoginPrompt"):
+            hint = (
+                " Jika Firefox baru menolak login di shortcut, buka Firefox biasa lalu akses about:profiles -> Launch profile in new browser pada profil "
+                f"'{cfg.get('profile')}' -> login X -> tutup jendelanya."
+                if cfg.get("engine") == "bidi"
+                else ""
+            )
             return {
                 "logged_in": False,
                 "url": (home_data or {}).get("url"),
                 "browser": cfg["browser"],
                 "profile": cfg.get("profile"),
-                "message": "Akun X belum login di profil terisolasi ini. Buka shortcut/launcher profil terpisah lalu login sekali dan tutup jendelanya.",
+                "message": (
+                    "Akun X belum login di profil terisolasi ini. Buka shortcut/launcher profil terpisah "
+                    "(diluncurkan sebagai browser normal tanpa debug flag) lalu login X sekali dan tutup jendelanya."
+                    + hint
+                ),
             }
 
         handle_clean = profile_href.strip("/").split("/")[0]

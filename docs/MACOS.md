@@ -65,7 +65,7 @@ Yang otomatis dilakukan `setup.sh` di macOS:
 
 Jika `auto-detect-account` melaporkan belum login:
 
-1. Buka Desktop Finder dan klik ganda **`AntiGravity X (<Browser> - <Profile>).command`** (atau jalankan `./shortcuts/antigravity-x-*.sh` di Terminal).
+1. Buka Desktop Finder dan klik ganda **`AntiGravity X (<Browser> - <Profile>).command`** (atau jalankan `./shortcuts/antigravity-x-*.sh` di Terminal). Launcher membuka profil terisolasi secara normal (**tanpa debug flag aktif** agar form login X tidak menolak username).
 2. Jika muncul izin Gatekeeper untuk file `.command` yang baru dibuat, jalankan dari Terminal:
    ```bash
    ./shortcuts/antigravity-x-*.sh
@@ -75,6 +75,9 @@ Jika `auto-detect-account` melaporkan belum login:
    ```bash
    ./target/release/x-social-draft-workflow auto-detect-account
    ```
+
+> **Jika X tetap gagal pada tahap username di profil baru:**  
+> Untuk **Firefox**, buka `Firefox.app` biasa -> ketik `about:profiles` di address bar -> klik **"Launch profile in new browser"** pada profil **`Raid`** -> login X -> tutup penuh (`Cmd+Q`) -> jalankan `auto-detect-account`. Untuk Chromium (`Brave` / `Chrome` / `Edge`), coba muat `https://x.com` 1–2 detik terlebih dulu atau gunakan login Google/Apple SSO yang tertaut, atau salin manual subfolder `Default` yang sudah terlogin X ke `~/Library/Application Support/AntiGravity-Browser/profiles/<browser>-Agent/Default` saat browser tertutup.
 
 ---
 

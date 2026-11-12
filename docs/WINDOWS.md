@@ -60,15 +60,30 @@ Yang otomatis dikerjakan `setup.ps1`:
 Jika pada tahap setup akun X belum terdeteksi (`"logged_in": false`):
 
 1. Cari shortcut baru di **Desktop Windows** kamu bernama **`AntiGravity X (<Browser> - <Profile>).lnk`**.
-2. **Klik ganda (double-click)** shortcut itu — jendela browser profil terpisah akan terbuka ke `https://x.com/home` tanpa menyentuh browser kerja utama kamu.
-3. **Login akun X** kamu sekali di jendela itu.
-4. **Tutup jendela browser tersebut** secara penuh agar port debug & kunci profil siap dipakai mode headless.
+2. **Klik ganda (double-click)** shortcut itu — jendela browser profil terpisah akan terbuka ke `https://x.com` sebagai **jendela browser normal (tanpa port debug aktif)** agar X tidak menolak login saat memasukkan username.
+3. Tunggu halaman `x.com` termuat penuh (1–2 detik), klik **Sign in / Masuk**, lalu **login akun X** kamu sekali di jendela itu.
+4. **Tutup jendela browser tersebut** secara penuh agar kunci profil dilepas dan siap dipakai mode headless.
 5. Jalankan ulang deteksi akun:
    ```powershell
    .\target\release\x-social-draft-workflow.exe auto-detect-account
    ```
 
 Sekarang `@handle` dan `display_name` kamu otomatis tercatat, dan selanjutnya agent berjalan dalam mode headless tanpa memunculkan jendela GUI.
+
+### Alternatif Jika X Gagal Saat Memasukkan Username di Shortcut
+
+Kadang X / Cloudflare menolak login pada profil browser baru yang belum punya riwayat/cookie sama sekali (`Something went wrong` atau gagal sebelum tahap password):
+
+1. **Cara Tercepat untuk Firefox (`about:profiles`):**
+   - Buka **Mozilla Firefox biasa** dari Start Menu / Taskbar.
+   - Ketik **`about:profiles`** pada address bar lalu tekan **Enter**.
+   - Cari profil **`Raid`** -> klik tombol **"Launch profile in new browser"** (*Buka profil di peramban baru*).
+   - Login X lewat jendela Firefox biasa tersebut sampai masuk beranda (`x.com/home`).
+   - Tutup penuh Firefox yang baru dibuka itu, lalu jalankan `.\target\release\x-social-draft-workflow.exe auto-detect-account`.
+   *(Jika sebelumnya kamu sudah login X di profil Firefox default, kamu juga bisa menutup semua Firefox lalu menyalin isi folder profil default ke folder `*.Raid` yang tertera di halaman `about:profiles`.)*
+2. **Untuk Brave / Chrome / Edge:**
+   - Pastikan shortcut sudah diperbarui memakai versi repo terbaru (`.\target\release\x-social-draft-workflow.exe create-shortcut`) supaya bebas debug flag saat login.
+   - Buka `https://x.com` lewat shortcut itu, muat halaman 1–2 detik atau login via tautan **Sign in with Google / Apple** jika akun X kamu tertaut, atau salin manual isi folder profil `Default` yang sudah terlogin X ke `~\AppData\Local\AntiGravity-Browser\profiles\<browser>-Agent\Default` (saat semua jendela browser ditutup).
 
 ---
 

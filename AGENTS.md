@@ -27,7 +27,7 @@ When the user asks to set up, load, or check workspace readiness:
    - If `dedicated_browser_designated` is `true` and `account_confirmed` is `false`, run `<CLI> auto-detect-account`.
 5. Once ready, confirm in Indonesian:
    `Sudah ter-install dan ter-load 100%. Siap kerja Bos, tinggal kasih link-nya aja langsung gw kerjakan sekarang.`
-6. If `logged_in` is `false`, guide the user in Indonesian to log in once using their generated OS launcher (`.lnk` / `.desktop` / `.command` / `.sh`, or `scp`/X11 on headless VPS as documented in `docs/LINUX.md`), close that window, and run `auto-detect-account`.
+6. If `logged_in` is `false`, guide the user in Indonesian to log in once using their clean generated OS launcher (`.lnk` / `.desktop` / `.command` / `.sh`, which launches without debug flags so X login succeeds cleanly) or via Firefox `about:profiles` (or `scp`/X11 on headless VPS as documented in `docs/LINUX.md`), close that window, and run `auto-detect-account`.
 
 ## X Workflow & Pacing Rules
 

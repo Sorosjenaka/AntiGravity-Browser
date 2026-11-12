@@ -64,12 +64,15 @@ Atau pilih browser secara eksplisit:
    - Launcher menu aplikasi: `~/.local/share/applications/antigravity-x-<browser>-<profile>.desktop`
    - Shortcut Desktop (jika `~/Desktop` ada): `~/Desktop/AntiGravity X (<Browser> - <Profile>).desktop`
    - Script launcher di `shortcuts/antigravity-x-<browser>-<profile>.sh`
-2. Klik shortcut Desktop (atau jalankan `./shortcuts/antigravity-x-<browser>-<profile>.sh`), lalu **login X sekali**.
-3. Tutup jendela browser tersebut.
+2. Klik shortcut Desktop (atau jalankan `./shortcuts/antigravity-x-<browser>-<profile>.sh`) — browser terbuka **tanpa port debug aktif** ke `https://x.com` agar login tidak terblokir di tahap username.
+3. **Login X sekali** sampai masuk beranda, lalu tutup penuh jendela browser tersebut.
 4. Jalankan deteksi akun X di mode headless:
    ```bash
    ./target/release/x-social-draft-workflow auto-detect-account
    ```
+
+> **Jika X tetap gagal saat memasukkan username di profil baru:**  
+> Untuk **Firefox**, buka Firefox biasa -> ketik `about:profiles` di address bar -> klik **"Launch profile in new browser"** pada profil **`Raid`** -> login X -> tutup Firefox -> jalankan `auto-detect-account`. (Atau salin manual isi profil Firefox/Chromium yang sudah terlogin X ke folder profil workspace saat browser tertutup.)
 
 ### Skenario B — Kamu Memakai **Linux VPS Headless (SSH-Only Tanpa Layar)**
 

@@ -60,8 +60,9 @@ Opsi memilih browser spesifik (`-Browser` di Windows atau `--browser` di Linux/m
 - `custom` dengan `-ExePath` / `--exe-path` (termasuk bundle `.app` di macOS atau `/usr/bin/chromium` di Linux)
 
 > **Catatan Login X Pertama Kali:**
-> - **Windows / Linux Desktop / macOS:** Klik ganda shortcut (`AntiGravity X (...).lnk` / `.desktop` / `.command`), login akun X sekali di browser terisolasi itu, lalu tutup jendelanya. Setelah itu jalankan `auto-detect-account`.
-> - **Linux VPS Headless (tanpa GUI):** Salin folder profil terisolasi yang sudah login dari PC lokal via `scp` ke VPS (`~/.local/share/AntiGravity-Browser/profiles/...`), atau login via `ssh -X` — langkah lengkapnya ada di [**Panduan Linux & VPS**](docs/LINUX.md).
+> - **Windows / Linux Desktop / macOS:** Klik ganda shortcut (`AntiGravity X (...).lnk` / `.desktop` / `.command`), browser terbuka sebagai jendela normal terisolasi (**tanpa port debug aktif** agar login X tidak terblokir di tahap username). Login akun X sekali, lalu **tutup penuh jendelanya**, setelah itu jalankan `auto-detect-account`.
+> - **Jika X tetap menolak login pada profil baru yang masih kosong:** Untuk **Firefox**, buka Firefox biasa lalu ketik `about:profiles` di address bar -> klik **"Launch profile in new browser"** pada profil **`Raid`** -> login X dari situ -> tutup jendelanya -> jalankan `auto-detect-account`.
+> - **Linux VPS Headless (tanpa GUI):** Salin folder profil terisolasi yang sudah login dari PC lokal via `scp` ke VPS (`~/.local/share/AntiGravity-Browser/profiles/...` atau folder `*.Raid` Firefox), atau login via `ssh -X` — langkah lengkapnya ada di [**Panduan Linux & VPS**](docs/LINUX.md).
 
 ---
 
