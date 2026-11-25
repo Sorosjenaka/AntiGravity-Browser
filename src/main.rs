@@ -4,9 +4,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use x_social_draft_workflow::{
-    DraftSetInput, add_post, confirm_account, confirm_liked, confirm_posted, connect_database,
-    designate_browser, duplicate_status, record_imported_reply, report_markdown, save_drafts,
-    status_summary, stored_prompt,
+    DraftSetInput, PromptPolicy, add_post, append_prompt_rule, audit_completeness,
+    audit_report_markdown, confirm_account, confirm_liked, confirm_posted, connect_database,
+    designate_browser, duplicate_status, load_prompt_policy, prompt_state, record_imported_reply,
+    report_markdown, save_drafts, set_prompt, status_summary, stored_prompt,
 };
 
 #[derive(Debug, Parser)]
@@ -113,8 +114,47 @@ enum Command {
     },
     /// Print a Markdown results table.
     Report,
-    /// Print the saved reply-generation prompt.
-    ShowPrompt,
+    /// Print the active reply-generation prompt (custom or repo default).
+    ShowPrompt {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Configure repo default prompt, custom user prompt, or append a logic clarification rule.
+    SetPrompt {
+        #[arg(long)]
+        default: bool,
+        #[arg(long)]
+        file: Option<PathBuf>,
+        #[arg(long)]
+        text: Option<String>,
+        #[arg(long)]
+        append_rule: Option<String>,
+        #[arg(long)]
+        language: Option<String>,
+        #[arg(long)]
+        min_words: Option<usize>,
+        #[arg(long)]
+        max_words: Option<usize>,
+        #[arg(long)]
+        allow_questions: bool,
+        #[arg(long)]
+        no_project_short: bool,
+        #[arg(long)]
+        allow_symbols: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run strict completeness audit against expected URLs or plan JSON and print a Markdown table.
+    Audit {
+        #[arg(long)]
+        urls_file: Option<PathBuf>,
+        #[arg(long)]
+        plan: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        strict: bool,
+    },
 }
 
 fn read_text(path: &PathBuf) -> Result<String> {
@@ -345,7 +385,142 @@ fn main() -> Result<()> {
             println!("Recorded Like confirmation for post {post_id}.");
         }
         Command::Report => print!("{}", report_markdown(&connection)?),
-        Command::ShowPrompt => print!("{}", stored_prompt(&connection)?),
+        Command::ShowPrompt { json } => {
+            if json {
+                let state = prompt_state(&connection)?;
+                println!("{}", serde_json::to_string_pretty(&state)?);
+            } else {
+                print!("{}", stored_prompt(&connection)?);
+            }
+        }
+        Command::SetPrompt {
+            default,
+            file,
+            text,
+            append_rule,
+            language,
+            min_words,
+            max_words,
+            allow_questions,
+            no_project_short,
+            allow_symbols,
+            json,
+        } => {
+            if let Some(rule) = append_rule {
+                let state = append_prompt_rule(&connection, &rule)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&state)?);
+                } else {
+                    println!(
+                        "Logic clarification rule appended (source={}).",
+                        state.source
+                    );
+                }
+            } else {
+                let has_policy_override = language.is_some()
+                    || min_words.is_some()
+                    || max_words.is_some()
+                    || allow_questions
+                    || no_project_short
+                    || allow_symbols;
+                let policy_override = if has_policy_override {
+                    let mut pol = if default {
+                        PromptPolicy::default()
+                    } else {
+                        load_prompt_policy(&connection)?
+                    };
+                    if let Some(lang) = language {
+                        pol.language = lang;
+                    }
+                    if let Some(min_w) = min_words {
+                        pol.min_words = min_w;
+                    }
+                    if let Some(max_w) = max_words {
+                        pol.max_words = max_w;
+                    }
+                    if allow_questions {
+                        pol.allow_questions = true;
+                    }
+                    if no_project_short {
+                        pol.require_project_short = false;
+                    }
+                    if allow_symbols {
+                        pol.allow_forbidden_symbols = true;
+                    }
+                    Some(pol)
+                } else {
+                    None
+                };
+
+                let custom_text = if let Some(path) = file {
+                    Some(read_text(&path)?)
+                } else {
+                    text
+                };
+                let state = set_prompt(
+                    &connection,
+                    default,
+                    custom_text.as_deref(),
+                    policy_override.as_ref(),
+                )?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&state)?);
+                } else {
+                    println!(
+                        "Active prompt configured (source={}, language={}, words={}..={}, require_project_short={}, allow_questions={}).",
+                        state.source,
+                        state.policy.language,
+                        state.policy.min_words,
+                        state.policy.max_words,
+                        state.policy.require_project_short,
+                        state.policy.allow_questions
+                    );
+                }
+            }
+        }
+        Command::Audit {
+            urls_file,
+            plan,
+            json,
+            strict,
+        } => {
+            let mut expected_urls: Vec<String> = Vec::new();
+            if let Some(uf) = urls_file {
+                let raw = read_text(&uf)?;
+                for line in raw.lines() {
+                    let s = line.trim();
+                    if !s.is_empty() && !s.starts_with('#') {
+                        expected_urls.push(s.to_owned());
+                    }
+                }
+            }
+            if let Some(pf) = plan {
+                let raw = read_text(&pf)?;
+                let parsed: serde_json::Value = serde_json::from_str(&raw)
+                    .with_context(|| format!("parsing plan JSON {}", pf.display()))?;
+                if let Some(arr) = parsed.as_array() {
+                    for entry in arr {
+                        if let Some(u) = entry.get("url").and_then(|v| v.as_str()) {
+                            expected_urls.push(u.to_owned());
+                        }
+                    }
+                }
+            }
+            let audit = audit_completeness(&connection, &expected_urls)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&audit)?);
+            } else {
+                print!("{}", audit_report_markdown(&audit));
+            }
+            if strict && !audit.all_complete {
+                bail!(
+                    "strict audit failed: {}/{} complete ({} incomplete/missing)",
+                    audit.complete_count,
+                    audit.total_expected,
+                    audit.incomplete_count
+                );
+            }
+        }
     }
     Ok(())
 }

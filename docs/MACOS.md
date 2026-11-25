@@ -33,17 +33,18 @@ git clone https://github.com/Sorosjenaka/AntiGravity-Browser.git
 cd AntiGravity-Browser
 chmod +x setup.sh run-plan.sh
 
-# Pilih otomatis browser terpasang, atau pilih langsung:
-./setup.sh --browser auto
+# Interaktif: tawarkan pilih browser + pilih prompt & cek sampel output
+./setup.sh
 ```
 
-Contoh memilih browser spesifik di macOS:
+Contoh memilih browser & prompt secara langsung di macOS:
 
 ```bash
+./setup.sh --browser chrome --profile Agent --prompt-mode default
 ./setup.sh --browser brave --profile Agent
-./setup.sh --browser chrome --profile Agent
 ./setup.sh --browser edge --profile Agent
 ./setup.sh --browser firefox --profile Raid
+./setup.sh --browser chrome --prompt-mode custom --prompt-file ./custom_prompt.md
 
 # Atau menunjuk langsung bundle .app di macOS:
 ./setup.sh --browser custom --exe-path "/Applications/Brave Browser.app" --profile Agent

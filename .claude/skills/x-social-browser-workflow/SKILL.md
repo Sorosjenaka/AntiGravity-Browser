@@ -1,10 +1,11 @@
 ---
 name: x-social-browser-workflow
 description: >-
-  Cross-OS isolated headless X workflow (Firefox WebDriver BiDi and Brave/Chrome/Edge CDP):
-  configure a dedicated workspace browser profile, generate OS launchers, connect on a loopback
-  debug port, detect the user's logged-in X account, read X posts, validate English drafts in SQLite,
-  and execute verified Likes and Replies or export a local action plan without disturbing desktop work.
+  Cross-OS isolated headless X workflow (Chrome/Edge/Brave CDP and Firefox WebDriver BiDi):
+  let the user choose their preferred browser and custom vs repo prompt (with sample outputs & logic
+  clarification), configure an anti-throttled isolated profile, read X posts in parallel, validate
+  drafts in SQLite, execute fault-tolerant Likes/Replies with 5-60s pacing, and run strict
+  parallel post-completion verification with Markdown table reports.
 ---
 
 # X Social Browser Workflow
@@ -15,15 +16,15 @@ This skill operates exclusively on the user's own confirmed account inside an is
 
 Use `.\target\release\x-social-draft-workflow.exe` on Windows or `./target/release/x-social-draft-workflow` on Linux/macOS:
 
-- List installed browsers & isolated workspace profiles: `x-social-draft-workflow list-browsers`
-- Connect chosen browser + create OS launcher (`.lnk`/`.desktop`/`.command`/`.sh`) + detect logged-in X user:
-  `x-social-draft-workflow connect-browser --browser <auto|brave|chrome|edge|firefox|custom> --profile <NAME>`
-- Refresh launcher or detect X account anytime: `create-shortcut` / `auto-detect-account`
-- Read any count of X posts (1, 5, 10, 50+): `read_posts.py --out data/observed_posts.json --urls "<url1>" ...` (or `--urls-file data/urls.txt`)
-- Record posts & English non-question drafts: `add-post`, `save-drafts` (`"language": "en"`, `7-9` words, `project_short`, zero `?`/`？`/emojis/quotes/dashes)
-- Execute headless engagement with randomized 5–60s pacing:
-  `engage_posts.py --plan data/action_plan.json --out data/engage_results.json --min-delay 5 --max-delay 60`
+- List installed browsers & isolated profiles first, then **ask the user which browser they want** (`chrome`, `edge`, `brave`, `firefox`, or `custom`):
+  `x-social-draft-workflow list-browsers` -> `x-social-draft-workflow connect-browser --browser <chosen> --profile Agent`
+- **Ask the user which prompt they want** (custom vs `reply_prompt.md`), persist via `set-prompt --default` or `set-prompt --file <PATH>` / `--append-rule "<text>"`, **show 3 sample outputs**, and confirm/refine logic before processing real links.
+- Read any count of X posts in parallel (`--concurrency 3`): `read_posts.py --concurrency 3 --out data/observed_posts.json --urls-file data/urls.txt --strict`
+- Record posts & validated drafts: `add-post`, `save-drafts`
+- Execute fault-tolerant headless engagement (5–60s pacing, auto-retry, tab recycling) + built-in parallel post-run audit:
+  `engage_posts.py --plan data/action_plan.json --out data/engage_results.json --verify-out data/verify_report.json --min-delay 5 --max-delay 60 --verify-concurrency 3 --strict`
+- Run standalone parallel verification & strict SQLite completeness audit + Markdown tables:
+  `verify_work.py --plan data/action_plan.json --results data/engage_results.json --concurrency 3 --strict`, `x-social-draft-workflow audit --plan data/action_plan.json --strict`, `x-social-draft-workflow report`.
 - Fallback local executor (for sandboxed or draft-only assistants): write `data/action_plan.json` and ask the user to run `.\run-plan.ps1` (Windows) or `./run-plan.sh` (Linux/VPS/macOS).
-- Confirm & print report: `confirm-posted`, `confirm-liked`, `report`.
 
-Respond to the user in clear Indonesian (Bahasa Indonesia), keeping all X post drafts in English (`en`).
+Respond to the user in clear Indonesian (Bahasa Indonesia), showing all tables and sample confirmations clearly.

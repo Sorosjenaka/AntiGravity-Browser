@@ -7,8 +7,11 @@ fi
 
 PLAN="${1:-data/action_plan.json}"
 OUT="${2:-data/engage_results.json}"
+VERIFY_OUT="${3:-data/verify_report.json}"
 MIN_DELAY="${MIN_DELAY:-5.0}"
 MAX_DELAY="${MAX_DELAY:-60.0}"
+VERIFY_CONCURRENCY="${VERIFY_CONCURRENCY:-3}"
+STRICT="${STRICT:-0}"
 
 if [[ ! -f "$PLAN" ]]; then
   echo "File plan tidak ditemukan: $PLAN" >&2
@@ -29,14 +32,22 @@ else
   PY_BIN="python"
 fi
 
-echo "[1/3] Menjalankan eksekusi headless terisolasi (jeda acak ${MIN_DELAY}-${MAX_DELAY} detik)..."
-"$PY_BIN" -u .agents/skills/x-social-browser-workflow/scripts/engage_posts.py \
-  --plan "$PLAN" \
-  --out "$OUT" \
-  --min-delay "$MIN_DELAY" \
+echo "[1/4] Menjalankan eksekusi headless terisolasi + auto-retry + audit paralel (jeda acak ${MIN_DELAY}-${MAX_DELAY} detik)..."
+ENG_ARGS=(
+  -u .agents/skills/x-social-browser-workflow/scripts/engage_posts.py
+  --plan "$PLAN"
+  --out "$OUT"
+  --verify-out "$VERIFY_OUT"
+  --min-delay "$MIN_DELAY"
   --max-delay "$MAX_DELAY"
+  --verify-concurrency "$VERIFY_CONCURRENCY"
+)
+if [[ "$STRICT" == "1" ]]; then
+  ENG_ARGS+=(--strict)
+fi
+"$PY_BIN" "${ENG_ARGS[@]}"
 
-echo "[2/3] Mencatat konfirmasi Like & Reply terverifikasi ke SQLite..."
+echo "[2/4] Menyinkronkan konfirmasi Like & Reply terverifikasi ke SQLite..."
 "$PY_BIN" - "$OUT" "$EXE" <<'PYEOF'
 import json, subprocess, sys
 out_path, exe = sys.argv[1], sys.argv[2]
@@ -49,5 +60,12 @@ for row in rows:
             subprocess.run([exe, "confirm-liked", "--post-id", str(row["post_id"])], check=False)
 PYEOF
 
-echo "[3/3] Laporan hasil akhir:"
+echo "[3/4] Strict SQLite Completeness Audit (Tabel):"
+AUDIT_ARGS=(audit --plan "$PLAN")
+if [[ "$STRICT" == "1" ]]; then
+  AUDIT_ARGS+=(--strict)
+fi
+"$EXE" "${AUDIT_ARGS[@]}"
+
+echo "[4/4] Laporan hasil akhir (Tabel):"
 "$EXE" report

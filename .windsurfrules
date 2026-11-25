@@ -1,8 +1,8 @@
 # AntiGravity-Browser Rules for Windsurf
 
 Follow AGENTS.md and .agents/skills/x-social-browser-workflow/SKILL.md:
-- Speak to the user in clear Indonesian (Bahasa Indonesia) cleanly and directly.
-- Use the local Rust CLI (`x-social-draft-workflow`) and isolated headless browser scripts (`browser_hub.py`, `read_posts.py`, `engage_posts.py`) cross-platform (Windows, Linux/VPS, macOS) solely on the user's isolated workspace profile.
-- Accept any number of X links and keep `engage_posts.py`'s randomized 5-60s pacing.
-- Write all X drafts/replies strictly in English (`en`), 7-9 words, including `project_short`, with zero question marks (`?`/`？`), emojis, quotes, or dashes.
+- Speak to the user in clear Indonesian (Bahasa Indonesia).
+- Always run `list-browsers` and ask the user which browser they want (`chrome`, `edge`, `brave`, `firefox`, `custom`) before running `connect-browser`.
+- Always ask whether the user wants to use a custom prompt (`set-prompt --file / --text / --append-rule`) or the repo default (`reply_prompt.md`), show 3 sample outputs, and ask for confirmation or logic clarifications before executing links.
+- Use `read_posts.py --concurrency 3`, `engage_posts.py` (5-60s pacing, fault recovery, parallel post-run check), `verify_work.py`, and `x-social-draft-workflow audit` / `report` Markdown tables strictly on isolated workspace profiles.
 - If browser execution is restricted in this environment, write validated drafts + `data/action_plan.json` so the user can execute `.\run-plan.ps1` or `./run-plan.sh`.

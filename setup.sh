@@ -5,14 +5,17 @@ if [[ -d "$HOME/.cargo/bin" ]]; then
   export PATH="$HOME/.cargo/bin:$PATH"
 fi
 
-BROWSER="auto"
+BROWSER=""
 PROFILE=""
 EXE_PATH=""
 HANDLE=""
 DISPLAY_NAME=""
 PORT=""
+PROMPT_MODE="ask"
+PROMPT_FILE=""
 NO_SHORTCUT=0
 NO_DETECT=0
+NON_INTERACTIVE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -22,21 +25,24 @@ while [[ $# -gt 0 ]]; do
     --handle) HANDLE="$2"; shift 2 ;;
     --display-name) DISPLAY_NAME="$2"; shift 2 ;;
     --port) PORT="$2"; shift 2 ;;
+    --prompt-mode) PROMPT_MODE="$2"; shift 2 ;;
+    --prompt-file) PROMPT_FILE="$2"; shift 2 ;;
     --no-shortcut) NO_SHORTCUT=1; shift ;;
     --no-detect) NO_DETECT=1; shift ;;
+    --non-interactive) NON_INTERACTIVE=1; shift ;;
     -h|--help)
-      echo "Usage: ./setup.sh [--browser auto|firefox|brave|chrome|edge|custom] [--profile NAME] [--exe-path PATH] [--handle @user --display-name 'Name'] [--port PORT] [--no-shortcut] [--no-detect]"
+      echo "Usage: ./setup.sh [--browser ask|auto|chrome|edge|brave|firefox|custom] [--profile NAME] [--exe-path PATH] [--handle @user --display-name 'Name'] [--port PORT] [--prompt-mode ask|default|custom] [--prompt-file PATH] [--no-shortcut] [--no-detect] [--non-interactive]"
       exit 0
       ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
 
-echo "[1/5] Checking Rust & building release binary..."
+echo "[1/6] Checking Rust & building release binary..."
 cargo test
 cargo build --release
 
-echo "[2/5] Checking Python & websockets dependency..."
+echo "[2/6] Checking Python & websockets dependency..."
 PY_BIN=""
 if [[ -x ".venv/bin/python" ]]; then
   PY_BIN=".venv/bin/python"
@@ -58,12 +64,21 @@ if ! "$PY_BIN" -c "import websockets" >/dev/null 2>&1; then
   fi
 fi
 
-echo "[3/5] Initializing local SQLite database..."
+echo "[3/6] Initializing local SQLite database..."
 EXE="./target/release/x-social-draft-workflow"
 "$EXE" init
 
-echo "[4/5] Connecting browser ($BROWSER), creating isolated launcher, and auto-detecting X user..."
-CONN_ARGS=(connect-browser --browser "$BROWSER")
+EFFECTIVE_BROWSER="$BROWSER"
+if [[ -z "$EFFECTIVE_BROWSER" ]]; then
+  if [[ "$NON_INTERACTIVE" -eq 1 ]] || [[ ! -t 0 ]]; then
+    EFFECTIVE_BROWSER="auto"
+  else
+    EFFECTIVE_BROWSER="ask"
+  fi
+fi
+
+echo "[4/6] Selecting & connecting browser ($EFFECTIVE_BROWSER), creating isolated launcher, and auto-detecting X user..."
+CONN_ARGS=(connect-browser --browser "$EFFECTIVE_BROWSER")
 [[ -n "$PROFILE" ]] && CONN_ARGS+=(--profile "$PROFILE")
 [[ -n "$EXE_PATH" ]] && CONN_ARGS+=(--exe-path "$EXE_PATH")
 [[ -n "$PORT" ]] && CONN_ARGS+=(--port "$PORT")
@@ -78,5 +93,11 @@ if [[ -n "$HANDLE" && -n "$DISPLAY_NAME" ]]; then
   "$EXE" confirm-account --handle "$HANDLE" --display-name "$DISPLAY_NAME"
 fi
 
-echo "[5/5] Current status:"
+echo "[5/6] Configuring reply prompt & previewing sample outputs..."
+PROMPT_ARGS=(.agents/skills/x-social-browser-workflow/scripts/prompt_setup.py --cli-path "$EXE" --mode "$PROMPT_MODE")
+[[ -n "$PROMPT_FILE" ]] && PROMPT_ARGS+=(--prompt-file "$PROMPT_FILE")
+[[ "$NON_INTERACTIVE" -eq 1 ]] && PROMPT_ARGS+=(--non-interactive)
+"$PY_BIN" "${PROMPT_ARGS[@]}"
+
+echo "[6/6] Current status:"
 "$EXE" status

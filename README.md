@@ -8,23 +8,25 @@ Alur kerja X (Twitter) lintas OS (**Windows**, **Linux Desktop / Linux VPS**, da
 
 | Sistem Operasi | Script Setup | Launcher / Shortcut | Fallback Eksekutor | Panduan Terpisah |
 | :--- | :--- | :--- | :--- | :--- |
-| **Windows 10 / 11** | `.\setup.ps1 -Browser auto` | Desktop `.lnk` (`MS-SHLLINK`) | `.\run-plan.ps1` | [**Baca Panduan Windows**](docs/WINDOWS.md) |
-| **Linux Desktop & Linux VPS** | `./setup.sh --browser auto` | `.desktop` + `shortcuts/*.sh` | `./run-plan.sh` | [**Baca Panduan Linux & VPS**](docs/LINUX.md) |
-| **macOS (Apple Silicon / Intel)** | `./setup.sh --browser auto` | Desktop `.command` + `.sh` | `./run-plan.sh` | [**Baca Panduan macOS**](docs/MACOS.md) |
+| **Windows 10 / 11** | `.\setup.ps1` | Desktop `.lnk` (`MS-SHLLINK`) | `.\run-plan.ps1` | [**Baca Panduan Windows**](docs/WINDOWS.md) |
+| **Linux Desktop & Linux VPS** | `./setup.sh` | `.desktop` + `shortcuts/*.sh` | `./run-plan.sh` | [**Baca Panduan Linux & VPS**](docs/LINUX.md) |
+| **macOS (Apple Silicon / Intel)** | `./setup.sh` | Desktop `.command` + `.sh` | `./run-plan.sh` | [**Baca Panduan macOS**](docs/MACOS.md) |
 
 ---
 
 ## Arsitektur Aman & Fitur Utama
 
-1. **Lintas OS (Windows, Linux Desktop, Linux VPS Headless, macOS):** Mendeteksi executable browser native tiap OS (`Firefox` WebDriver BiDi termasuk Snap/Flatpak Ubuntu, `Brave`, `Google Chrome`, `Chromium`, `Microsoft Edge`, atau bundle `.app`/path custom), serta memakai mode headless standar (`-headless` dan `--headless=new` + `--disable-dev-shm-usage` di Linux).
-2. **Isolasi Profil Ketat & Aman Security-Scanner:**
+1. **Lintas OS & Anti-Macet di Chrome / Edge / Brave / Firefox:** Mendeteksi executable browser native tiap OS (`Google Chrome`, `Microsoft Edge`, `Brave Browser`, `Mozilla Firefox` BiDi, atau bundle `.app`/custom). Engine CDP dilengkapi anti-throttling penuh (nonaktifkan Sleeping Tabs / Efficiency Mode Edge, background tray lock, komponen latar Brave), aktivasi tab aktif, `userAgentMetadata` sinkron, `Input.insertText` cepat, timeout ketat per panggilan WebSocket, auto-recovery sesi, serta per-item retry & pass ulang otomatis agar **tidak macet, tidak delay, dan 100% pekerjaan selesai tuntas**.
+2. **Pilihan Browser Interaktif Sebelum Install:** Menjalankan `.\setup.ps1` atau `./setup.sh` (maupun lewat AI agent) akan menampilkan daftar browser terpasang dan **menawarkan kamu memilih browser apa yang mau dipakai** (`Chrome`, `Edge`, `Brave`, `Firefox`, atau `Custom`) sebelum konfigurasi dibuat.
+3. **Pilihan Prompt Custom vs Bawaan Repo + Pratinjau Sampel Output:** Sebelum bekerja, setup/agent menawarkan kamu memilih **prompt custom milik sendiri** atau **prompt bawaan repo (`reply_prompt.md`)**, langsung menampilkan **3 sampel output** dalam format tabel, lalu meminta konfirmasi apakah sudah cocok, perlu diperbaiki, atau perlu ditambah **penegasan logika** (`set-prompt --append-rule`).
+4. **Auto-Check Ketat, Verifikasi Paralel Pasca-Selesai & Laporan Tabel:** Pembacaan link berjalan paralel (`read_posts.py --concurrency 3`), dan setelah eksekusi `engage_posts.py` / `run-plan` selesai, sistem otomatis menjalankan **verifikasi paralel lintas tab (`verify_work.py`) + audit SQLite (`audit`)**, auto-repair jika ada yang terlewat, lalu menampilkan **laporan lengkap berbentuk tabel Markdown**.
+5. **Isolasi Profil Ketat & Aman Security-Scanner:**
    - **Tidak mengakses profil browser pribadi kamu** dan **tidak melakukan port-scanning** ke aplikasi lain.
    - Seluruh sesi berjalan pada direktori profil terisolasi milik workspace (`AntiGravity-Browser/profiles/` untuk Chromium atau profil `-P` khusus untuk Firefox), hanya lewat loopback `127.0.0.1` dengan origin debug ketat (`--remote-allow-origins=http://127.0.0.1:<port>`).
    - Shortcut Desktop Windows (`.lnk`) ditulis langsung dengan format biner standar `[MS-SHLLINK]` murni secara native di Python.
-3. **Auto-Deteksi User X:** Otomatis membaca `@handle` dan Display Name akun X yang sedang login di profil terisolasi tersebut (`auto-detect-account`).
-4. **Bebas Pilih Browser Apa Saja:** Mendukung **Mozilla Firefox**, **Brave**, **Google Chrome / Chromium**, **Microsoft Edge**, maupun path browser custom.
-5. **Jumlah Link Bebas & Jeda Acak 5–60 Detik:** Mendukung **berapa pun jumlah link** (1, 3, 10, 25, 50, atau lebih — tidak dibatasi 10). Antar aksi Like & Reply otomatis memakai **algoritma jeda acak 5 detik sampai maksimal 60 detik** (`--min-delay 5 --max-delay 60`) dengan distribusi multi-band natural.
-6. **Berjalan Tanpa Mengganggu Pekerjaan Desktop:** Eksekusi menggunakan mode headless standar agar jendela kerja utama di Desktop tetap fokus.
+6. **Auto-Deteksi User X:** Otomatis membaca `@handle` dan Display Name akun X yang sedang login di profil terisolasi tersebut (`auto-detect-account`).
+7. **Jumlah Link Bebas & Jeda Acak 5–60 Detik:** Mendukung **berapa pun jumlah link** (1, 3, 10, 25, 50, atau lebih). Antar aksi Like & Reply otomatis memakai **algoritma jeda acak 5 detik sampai maksimal 60 detik** (`--min-delay 5 --max-delay 60`).
+8. **Berjalan Tanpa Mengganggu Pekerjaan Desktop:** Eksekusi menggunakan mode headless standar agar jendela kerja utama di Desktop tetap fokus.
 
 ---
 
@@ -42,7 +44,7 @@ Detail lengkap baca [**Panduan Windows**](docs/WINDOWS.md):
 ```powershell
 git clone https://github.com/Sorosjenaka/AntiGravity-Browser.git
 cd AntiGravity-Browser
-.\setup.ps1 -Browser auto
+.\setup.ps1
 ```
 
 ### Lewat Linux / VPS / macOS (Bash)
@@ -51,13 +53,12 @@ Detail lengkap baca [**Panduan Linux & VPS**](docs/LINUX.md) atau [**Panduan mac
 git clone https://github.com/Sorosjenaka/AntiGravity-Browser.git
 cd AntiGravity-Browser
 chmod +x setup.sh run-plan.sh
-./setup.sh --browser auto
+./setup.sh
 ```
 
-Opsi memilih browser spesifik (`-Browser` di Windows atau `--browser` di Linux/macOS):
-- `auto` (otomatis pilih browser terpasang)
-- `brave` | `chrome` | `edge` | `firefox`
-- `custom` dengan `-ExePath` / `--exe-path` (termasuk bundle `.app` di macOS atau `/usr/bin/chromium` di Linux)
+Saat `setup.ps1` / `setup.sh` dijalankan tanpa flag, installer otomatis menawarkan:
+1. **Menu Pilih Browser:** `chrome` | `edge` | `brave` | `firefox` | `custom` (atau langsung via `-Browser` / `--browser`).
+2. **Menu Pilih Prompt + Sampel Output:** Pilih prompt bawaan repo (`reply_prompt.md`) atau prompt custom kamu sendiri, lihat **3 sampel output**, lalu konfirmasi atau tambahkan **penegasan logika** (`set-prompt --append-rule`).
 
 > **Catatan Login X Pertama Kali:**
 > - **Windows / Linux Desktop / macOS:** Klik ganda shortcut (`AntiGravity X (...).lnk` / `.desktop` / `.command`), browser terbuka sebagai jendela normal terisolasi (**tanpa port debug aktif** agar login X tidak terblokir di tahap username). Login akun X sekali, lalu **tutup penuh jendelanya**, setelah itu jalankan `auto-detect-account`.
@@ -110,8 +111,16 @@ Ganti prefix binary sesuai OS:
 # Lihat semua browser terpasang, profil terisolasi workspace, & port terkonfigurasi
 ./target/release/x-social-draft-workflow list-browsers
 
-# Hubungkan browser pilihan + buat shortcut/launcher + deteksi user X
-./target/release/x-social-draft-workflow connect-browser --browser brave --profile Agent
+# Hubungkan browser pilihan (atau pakai --browser ask untuk menu interaktif)
+./target/release/x-social-draft-workflow connect-browser --browser chrome --profile Agent
+
+# Pilih prompt repo default, custom file/teks, atau tambah penegasan logika:
+./target/release/x-social-draft-workflow set-prompt --default
+./target/release/x-social-draft-workflow set-prompt --file custom_prompt.md
+./target/release/x-social-draft-workflow set-prompt --append-rule "Selalu sebutkan metrik teknis jika ada di post."
+
+# Audit ketat kelengkapan seluruh URL/plan dalam format tabel Markdown:
+./target/release/x-social-draft-workflow audit --plan data/action_plan.json --strict
 
 # Buat ulang shortcut/launcher profil terpisah
 ./target/release/x-social-draft-workflow create-shortcut
@@ -119,7 +128,7 @@ Ganti prefix binary sesuai OS:
 # Deteksi ulang user X yang sedang login di profil terisolasi
 ./target/release/x-social-draft-workflow auto-detect-account
 
-# Cek status sistem, database, browser, & akun aktif
+# Cek status sistem, database, browser, prompt aktif, & akun aktif
 ./target/release/x-social-draft-workflow status
 ```
 
@@ -128,17 +137,19 @@ Sub-perintah workflow post & laporan:
 init
 status
 list-browsers
-connect-browser --browser <auto|brave|chrome|edge|firefox|custom> [--profile NAME] [--exe-path PATH]
+connect-browser --browser <auto|ask|chrome|edge|brave|firefox|custom> [--profile NAME] [--exe-path PATH]
 create-shortcut
 auto-detect-account
 confirm-account --handle @name --display-name Name
 designate-browser --label LABEL
+show-prompt [--json]
+set-prompt [--default | --file PATH | --text TEXT | --append-rule TEXT] [--language LANG] [--min-words N] [--max-words N] [--allow-questions] [--no-project-short] [--allow-symbols] [--json]
 add-post --url URL --text-file PATH --language LANG
 save-drafts --post-id ID --file PATH
 check-duplicate --text-file PATH
 import-reply --text-file PATH
 confirm-posted --draft-id ID
 confirm-liked --post-id ID
+audit [--urls-file PATH | --plan PATH] [--json] [--strict]
 report
-show-prompt
 ```

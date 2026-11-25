@@ -1,8 +1,9 @@
 use rusqlite::Connection;
 use x_social_draft_workflow::{
-    DraftOptionInput, DraftSetInput, add_post, confirm_account, confirm_liked, confirm_posted,
-    designate_browser, duplicate_status, initialize_schema, normalize_reply, record_imported_reply,
-    report_markdown, save_drafts,
+    DraftOptionInput, DraftSetInput, PromptPolicy, add_post, append_prompt_rule,
+    audit_completeness, audit_report_markdown, confirm_account, confirm_liked, confirm_posted,
+    designate_browser, duplicate_status, initialize_schema, normalize_reply, prompt_state,
+    record_imported_reply, report_markdown, save_drafts, set_prompt,
 };
 
 fn ready_db() -> Connection {
@@ -247,4 +248,75 @@ fn designating_browser_before_confirm_account_is_preserved() {
     )
     .unwrap();
     assert_eq!(post_id, 1);
+}
+
+#[test]
+fn custom_prompt_persists_across_schema_reinit_and_supports_rule_append() {
+    let connection = ready_db();
+    let custom_policy = PromptPolicy {
+        language: "en".to_owned(),
+        min_words: 5,
+        max_words: 12,
+        require_project_short: true,
+        allow_questions: false,
+        allow_forbidden_symbols: false,
+    };
+    let state = set_prompt(
+        &connection,
+        false,
+        Some("Write concise technical builder replies mentioning project_short."),
+        Some(&custom_policy),
+    )
+    .unwrap();
+    assert_eq!(state.source, "user_custom");
+    assert_eq!(state.policy.min_words, 5);
+    assert_eq!(state.policy.max_words, 12);
+
+    // Re-running initialize_schema must NOT wipe out user's custom prompt.
+    initialize_schema(&connection).unwrap();
+    let after_reinit = prompt_state(&connection).unwrap();
+    assert_eq!(after_reinit.source, "user_custom");
+    assert!(after_reinit.prompt_text.contains("technical builder replies"));
+
+    let updated = append_prompt_rule(&connection, "Avoid generic hype words like moon or lfg.").unwrap();
+    assert!(updated.prompt_text.contains("Avoid generic hype words"));
+    assert_eq!(updated.source, "user_custom");
+
+    let status = x_social_draft_workflow::status_summary(&connection).unwrap();
+    assert_eq!(status.prompt_source, "user_custom");
+}
+
+#[test]
+fn audit_completeness_detects_missing_urls_and_passes_when_all_complete() {
+    let connection = ready_db();
+    let post_id = add_post(
+        &connection,
+        "https://x.com/alice/status/1111111111",
+        "Glint shipped fast indexing.",
+        "en",
+    )
+    .unwrap();
+    let drafts = save_drafts(&connection, post_id, &sample_drafts()).unwrap();
+    confirm_posted(&connection, drafts.draft_ids[0]).unwrap();
+    confirm_liked(&connection, post_id).unwrap();
+
+    let expected = vec![
+        "https://x.com/alice/status/1111111111".to_owned(),
+        "https://x.com/bob/status/2222222222".to_owned(),
+    ];
+    let incomplete_audit = audit_completeness(&connection, &expected).unwrap();
+    assert_eq!(incomplete_audit.total_expected, 2);
+    assert_eq!(incomplete_audit.complete_count, 1);
+    assert_eq!(incomplete_audit.incomplete_count, 1);
+    assert!(!incomplete_audit.all_complete);
+
+    let md = audit_report_markdown(&incomplete_audit);
+    assert!(md.contains("PASS"));
+    assert!(md.contains("MISSING/FAIL"));
+    assert!(md.contains("not_recorded_in_db"));
+
+    let complete_only = vec!["https://x.com/alice/status/1111111111".to_owned()];
+    let pass_audit = audit_completeness(&connection, &complete_only).unwrap();
+    assert!(pass_audit.all_complete);
+    assert_eq!(pass_audit.complete_count, 1);
 }

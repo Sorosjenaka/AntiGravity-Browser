@@ -38,16 +38,16 @@ git clone https://github.com/Sorosjenaka/AntiGravity-Browser.git
 cd AntiGravity-Browser
 chmod +x setup.sh run-plan.sh
 
-# Deteksi otomatis browser terpasang:
-./setup.sh --browser auto
+# Interaktif: tawarkan pilih browser + pilih prompt & cek sampel output
+./setup.sh
 ```
 
-Atau pilih browser secara eksplisit:
+Atau pilih browser & prompt secara eksplisit (misal di VPS non-interaktif):
 
 ```bash
-./setup.sh --browser firefox --profile Raid
+./setup.sh --browser firefox --profile Raid --prompt-mode default --non-interactive
+./setup.sh --browser chrome --profile Agent --prompt-mode default
 ./setup.sh --browser brave --profile Agent
-./setup.sh --browser chrome --profile Agent
 ./setup.sh --browser edge --profile Agent
 ```
 

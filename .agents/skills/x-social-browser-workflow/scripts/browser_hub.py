@@ -422,6 +422,106 @@ def discover_browsers(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
     }
 
 
+def _tune_isolated_chromium_prefs(user_data_dir: Path, browser_kind: str, profile_directory: str = "Default"):
+    """
+    Safely pre-configure ONLY our isolated workspace profile preferences so
+    Edge/Brave do not keep background tray locks alive or throttle/sleep tabs.
+    Never touches personal browser profile directories.
+    """
+    try:
+        prof_dir = user_data_dir / profile_directory
+        prof_dir.mkdir(parents=True, exist_ok=True)
+        prefs_path = prof_dir / "Preferences"
+        prefs: dict = {}
+        if prefs_path.exists():
+            try:
+                prefs = json.loads(prefs_path.read_text(encoding="utf-8"))
+                if not isinstance(prefs, dict):
+                    prefs = {}
+            except Exception:
+                prefs = {}
+
+        prefs.setdefault("background_mode", {})
+        if isinstance(prefs["background_mode"], dict):
+            prefs["background_mode"]["enabled"] = False
+
+        if browser_kind == "edge":
+            prefs.setdefault("browser", {})
+            if isinstance(prefs["browser"], dict):
+                prefs["browser"]["edge_efficiency_mode_enabled"] = False
+            prefs.setdefault("edge", {})
+            if isinstance(prefs["edge"], dict):
+                prefs["edge"].setdefault("sleeping_tabs", {})
+                if isinstance(prefs["edge"]["sleeping_tabs"], dict):
+                    prefs["edge"]["sleeping_tabs"]["enabled"] = False
+            prefs.setdefault("startup_boost", {})
+            if isinstance(prefs["startup_boost"], dict):
+                prefs["startup_boost"]["enabled"] = False
+        elif browser_kind == "brave":
+            prefs.setdefault("brave", {})
+            if isinstance(prefs["brave"], dict):
+                prefs["brave"].setdefault("p3a", {})["enabled"] = False
+                prefs["brave"].setdefault("stats", {})["reporting_enabled"] = False
+                prefs["brave"].setdefault("today", {})["opted_in"] = False
+
+        prefs_path.write_text(json.dumps(prefs, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def choose_auto_browser() -> str | None:
+    ff = resolve_browser_exe("firefox")
+    ff_profiles = {p["name"].lower() for p in list_firefox_profiles()}
+    if ff and "raid" in ff_profiles:
+        return "firefox"
+    for cand in ("chrome", "firefox", "edge", "brave"):
+        if resolve_browser_exe(cand):
+            return cand
+    return None
+
+
+def prompt_browser_choice(default_kind: str | None = None) -> str:
+    """Interactive terminal menu letting the user pick their preferred browser before setup."""
+    ordered = ["chrome", "edge", "brave", "firefox"]
+    discovery = discover_browsers()["browsers"]
+    installed = [k for k in ordered if discovery[k]["installed"]]
+    if not default_kind or default_kind not in ordered:
+        default_kind = installed[0] if installed else "chrome"
+
+    print("\n=== Pilih Browser untuk AntiGravity-Browser ===")
+    for idx, kind in enumerate(ordered, 1):
+        info = discovery[kind]
+        status = "TERPASANG" if info["installed"] else "Belum terpasang"
+        rec = " [Disarankan]" if kind == "chrome" and info["installed"] else ""
+        exe_str = f" ({info['executable']})" if info["executable"] else ""
+        print(f"  [{idx}] {info['display']:16s} - {status}{rec}{exe_str}")
+    print("  [5] Custom browser    - Masukkan path executable manual")
+
+    mapping = {
+        "1": "chrome", "chrome": "chrome", "google chrome": "chrome",
+        "2": "edge", "edge": "edge", "microsoft edge": "edge", "msedge": "edge",
+        "3": "brave", "brave": "brave", "brave browser": "brave",
+        "4": "firefox", "firefox": "firefox", "mozilla firefox": "firefox",
+        "5": "custom", "custom": "custom",
+    }
+    while True:
+        try:
+            raw = input(f"Pilih browser [1-5 atau nama, Enter = {default_kind}]: ").strip().lower()
+        except EOFError:
+            return default_kind
+        if not raw:
+            chosen = default_kind
+        else:
+            chosen = mapping.get(raw)
+        if not chosen:
+            print("Pilihan tidak dikenali. Ketik angka 1-5 atau chrome/edge/brave/firefox/custom.")
+            continue
+        if chosen != "custom" and not discovery[chosen]["installed"]:
+            print(f"{discovery[chosen]['display']} belum terdeteksi di perangkat ini. Pilih browser lain yang terpasang atau pilih [5] Custom.")
+            continue
+        return chosen
+
+
 def ensure_firefox_profile(firefox_exe: str, profile_name: str):
     existing = {p["name"].lower(): p["name"] for p in list_firefox_profiles()}
     if profile_name.lower() in existing:
@@ -439,33 +539,33 @@ def ensure_firefox_profile(firefox_exe: str, profile_name: str):
 def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
     if config_path.exists():
         return json.loads(config_path.read_text(encoding="utf-8"))
-    ff = resolve_browser_exe("firefox")
-    if ff:
-        return {
-            "browser": "firefox",
-            "display": "Mozilla Firefox",
-            "engine": "bidi",
-            "executable": ff,
-            "profile": "Raid",
-            "port": 9223,
-            "allow_hosts": "localhost,127.0.0.1",
-        }
-    for kind in ("brave", "chrome", "edge"):
+    for kind in ("chrome", "firefox", "edge", "brave"):
         exe = resolve_browser_exe(kind)
-        if exe:
-            ud = agent_profiles_root() / f"{kind}-Agent"
+        if not exe:
+            continue
+        if kind == "firefox":
             return {
-                "browser": kind,
-                "display": BROWSER_META[kind]["display"],
-                "engine": "cdp",
+                "browser": "firefox",
+                "display": "Mozilla Firefox",
+                "engine": "bidi",
                 "executable": exe,
-                "profile": "Agent",
-                "user_data_dir": str(ud),
-                "profile_directory": "Default",
-                "port": BROWSER_META[kind]["default_port"],
+                "profile": "Raid",
+                "port": 9223,
+                "allow_hosts": "localhost,127.0.0.1",
             }
+        ud = agent_profiles_root() / f"{kind}-Agent"
+        return {
+            "browser": kind,
+            "display": BROWSER_META[kind]["display"],
+            "engine": "cdp",
+            "executable": exe,
+            "profile": "Agent",
+            "user_data_dir": str(ud),
+            "profile_directory": "Default",
+            "port": BROWSER_META[kind]["default_port"],
+        }
     raise FileNotFoundError(
-        "Tidak ada browser yang terdeteksi (Firefox/Brave/Chrome/Edge). Jalankan connect-browser --exe-path <path>."
+        "Tidak ada browser yang terdeteksi (Chrome/Firefox/Edge/Brave). Jalankan connect-browser --exe-path <path>."
     )
 
 
@@ -780,6 +880,40 @@ def run_workflow_cli(args: list[str], cli_path: Path = DEFAULT_CLI_PATH, db_path
 # ============================================================================
 
 
+def _terminate_process_tree(proc: subprocess.Popen | None):
+    if not proc:
+        return
+    if proc.poll() is not None:
+        return
+    try:
+        proc.wait(timeout=4)
+        return
+    except Exception:
+        pass
+    try:
+        proc.terminate()
+        proc.wait(timeout=3)
+        return
+    except Exception:
+        pass
+    if _platform_key() == "win32":
+        try:
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+            )
+        except Exception:
+            pass
+    else:
+        try:
+            proc.kill()
+            proc.wait(timeout=2)
+        except Exception:
+            pass
+
+
 def from_bidi_val(v):
     if not isinstance(v, dict):
         return v
@@ -795,58 +929,151 @@ def from_bidi_val(v):
     return v
 
 
+class _BiDiTab:
+    def __init__(self, session: "_BiDiSession", ctx: str):
+        self._session = session
+        self.ctx = ctx
+
+    async def navigate(self, url: str, timeout: float = 35.0):
+        await self._session._navigate_ctx(self.ctx, url, timeout=timeout)
+
+    async def evaluate_dom(self, expr: str, timeout: float = 20.0):
+        return await self._session._evaluate_ctx(self.ctx, expr, timeout=timeout)
+
+    async def click_point(self, x: float, y: float, timeout: float = 15.0):
+        await self._session._click_ctx(self.ctx, x, y, timeout=timeout)
+
+    async def type_text(self, text: str, timeout: float = 30.0):
+        await self._session._type_ctx(self.ctx, text, timeout=timeout)
+
+    async def ping(self, timeout: float = 8.0) -> bool:
+        try:
+            val = await self.evaluate_dom("1 + 1", timeout=timeout)
+            return val == 2
+        except Exception:
+            return False
+
+    async def close(self):
+        await self._session.close_tab(self)
+
+
 class _BiDiSession:
-    def __init__(self, ws_url: str, port: int, owns_process: bool, proc: subprocess.Popen | None):
+    def __init__(self, ws_url: str, port: int, owns_process: bool, proc: subprocess.Popen | None, cfg: dict | None = None):
         self.ws_url = ws_url
         self.port = port
         self.owns_process = owns_process
         self.proc = proc
+        self.cfg = cfg or {}
         self.ws = None
         self.ctx = None
         self._next_id = 1
+        self._pending: dict[int, asyncio.Future] = {}
+        self._reader_task: asyncio.Task | None = None
+        self._send_lock = asyncio.Lock()
 
-    async def _call(self, method: str, params: dict | None = None):
+    async def _reader_loop(self):
+        try:
+            while self.ws is not None:
+                raw = await self.ws.recv()
+                data = json.loads(raw)
+                msg_id = data.get("id")
+                if msg_id is not None:
+                    fut = self._pending.pop(msg_id, None)
+                    if fut and not fut.done():
+                        fut.set_result(data)
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            for fut in list(self._pending.values()):
+                if not fut.done():
+                    fut.set_exception(ConnectionError(f"BiDi connection lost: {exc}"))
+            self._pending.clear()
+
+    async def _call(self, method: str, params: dict | None = None, timeout: float = 30.0):
+        if not self.ws:
+            raise ConnectionError("BiDi WebSocket is not connected")
         msg_id = self._next_id
         self._next_id += 1
-        await self.ws.send(
-            json.dumps({"id": msg_id, "method": method, "params": params or {}})
-        )
-        while True:
-            raw = await self.ws.recv()
-            data = json.loads(raw)
-            if data.get("id") == msg_id:
-                return data
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        self._pending[msg_id] = fut
+        try:
+            async with self._send_lock:
+                await self.ws.send(json.dumps({"id": msg_id, "method": method, "params": params or {}}))
+            return await asyncio.wait_for(fut, timeout=timeout)
+        except Exception:
+            self._pending.pop(msg_id, None)
+            raise
 
     async def start(self):
         self.ws = await websockets.connect(
-            self.ws_url, origin=f"http://127.0.0.1:{self.port}"
+            self.ws_url,
+            origin=f"http://127.0.0.1:{self.port}",
+            ping_interval=15,
+            ping_timeout=15,
+            close_timeout=4,
+            max_size=16 * 1024 * 1024,
         )
+        self._reader_task = asyncio.create_task(self._reader_loop())
         res = await self._call(
-            "session.new", {"capabilities": {"alwaysMatch": {"webSocketUrl": True}}}
+            "session.new", {"capabilities": {"alwaysMatch": {"webSocketUrl": True}}}, timeout=20.0
         )
         if res.get("type") == "error":
             raise RuntimeError(f"BiDi session.new failed: {res}")
+        tab = await self.open_tab()
+        self.ctx = tab.ctx
+
+    async def open_tab(self) -> _BiDiTab:
         tab = await self._call(
-            "browsingContext.create", {"type": "tab", "background": True}
+            "browsingContext.create", {"type": "tab", "background": False}, timeout=20.0
         )
-        self.ctx = tab["result"]["context"]
-        if self.owns_process:
-            await self._call("browsingContext.activate", {"context": self.ctx})
+        if tab.get("type") == "error":
+            raise RuntimeError(f"BiDi browsingContext.create failed: {tab}")
+        ctx = tab["result"]["context"]
+        try:
+            await self._call("browsingContext.activate", {"context": ctx}, timeout=10.0)
+        except Exception:
+            pass
+        return _BiDiTab(self, ctx)
 
-    async def navigate(self, url: str):
-        await self._call(
+    async def close_tab(self, tab: _BiDiTab):
+        if tab and tab.ctx and self.ws:
+            try:
+                await self._call("browsingContext.close", {"context": tab.ctx}, timeout=5.0)
+            except Exception:
+                pass
+
+    async def reset_tab(self):
+        old_ctx = self.ctx
+        new_tab = await self.open_tab()
+        self.ctx = new_tab.ctx
+        if old_ctx and self.ws:
+            try:
+                await self._call("browsingContext.close", {"context": old_ctx}, timeout=5.0)
+            except Exception:
+                pass
+
+    async def _navigate_ctx(self, ctx: str, url: str, timeout: float = 35.0):
+        res = await self._call(
             "browsingContext.navigate",
-            {"context": self.ctx, "url": url, "wait": "complete"},
+            {"context": ctx, "url": url, "wait": "complete"},
+            timeout=timeout,
         )
+        if res.get("type") == "error":
+            raise RuntimeError(f"BiDi navigation error: {res}")
 
-    async def evaluate_dom(self, expr: str):
+    async def navigate(self, url: str, timeout: float = 35.0):
+        await self._navigate_ctx(self.ctx, url, timeout=timeout)
+
+    async def _evaluate_ctx(self, ctx: str, expr: str, timeout: float = 20.0):
         res = await self._call(
             "script.evaluate",
             {
                 "expression": expr,
-                "target": {"context": self.ctx},
+                "target": {"context": ctx},
                 "awaitPromise": False,
             },
+            timeout=timeout,
         )
         if res.get("type") == "error":
             raise RuntimeError(f"BiDi script error: {res}")
@@ -855,11 +1082,14 @@ class _BiDiSession:
             raise RuntimeError(f"DOM exception: {r}")
         return from_bidi_val(r.get("result"))
 
-    async def click_point(self, x: float, y: float):
+    async def evaluate_dom(self, expr: str, timeout: float = 20.0):
+        return await self._evaluate_ctx(self.ctx, expr, timeout=timeout)
+
+    async def _click_ctx(self, ctx: str, x: float, y: float, timeout: float = 15.0):
         await self._call(
             "input.performActions",
             {
-                "context": self.ctx,
+                "context": ctx,
                 "actions": [
                     {
                         "type": "pointer",
@@ -878,9 +1108,13 @@ class _BiDiSession:
                     }
                 ],
             },
+            timeout=timeout,
         )
 
-    async def type_text(self, text: str):
+    async def click_point(self, x: float, y: float, timeout: float = 15.0):
+        await self._click_ctx(self.ctx, x, y, timeout=timeout)
+
+    async def _type_ctx(self, ctx: str, text: str, timeout: float = 30.0):
         actions = []
         for ch in text:
             actions.append({"type": "keyDown", "value": ch})
@@ -888,93 +1122,340 @@ class _BiDiSession:
         await self._call(
             "input.performActions",
             {
-                "context": self.ctx,
+                "context": ctx,
                 "actions": [{"type": "key", "id": "keyboard", "actions": actions}],
             },
+            timeout=timeout,
         )
+
+    async def type_text(self, text: str, timeout: float = 30.0):
+        await self._type_ctx(self.ctx, text, timeout=timeout)
+
+    async def type_text_keys(self, text: str, timeout: float = 30.0):
+        await self._type_ctx(self.ctx, text, timeout=timeout)
+
+    async def ping(self, timeout: float = 8.0) -> bool:
+        try:
+            return await self.evaluate_dom("1 + 1", timeout=timeout) == 2
+        except Exception:
+            return False
 
     async def close(self):
         try:
             if self.ctx and self.ws:
-                await self._call("browsingContext.close", {"context": self.ctx})
+                await self._call("browsingContext.close", {"context": self.ctx}, timeout=3.0)
         except Exception:
             pass
         try:
             if self.ws:
                 if self.owns_process:
-                    await self._call("browser.close")
+                    await self._call("browser.close", timeout=3.0)
                 else:
-                    await self._call("session.end")
+                    await self._call("session.end", timeout=3.0)
         except Exception:
             pass
+        if self._reader_task:
+            self._reader_task.cancel()
+            try:
+                await self._reader_task
+            except Exception:
+                pass
+            self._reader_task = None
         try:
             if self.ws:
-                await self.ws.close()
+                await asyncio.wait_for(self.ws.close(), timeout=3.0)
         except Exception:
             pass
-        if self.owns_process and self.proc:
-            try:
-                self.proc.wait(timeout=5)
-            except Exception:
-                self.proc.terminate()
+        self.ws = None
+        if self.owns_process:
+            _terminate_process_tree(self.proc)
+
+
+def _extract_chromium_ua_parts(browser_product: str | None) -> tuple[str, str]:
+    text = browser_product or ""
+    m = re.search(r"(?:Chrome|Edg|Brave)/(\d+\.\d+\.\d+\.\d+)", text)
+    full_ver = m.group(1) if m else "136.0.0.0"
+    major = full_ver.split(".")[0]
+    return full_ver, major
+
+
+def _build_ua_override_params(browser_product: str | None, browser_kind: str = "chrome") -> dict:
+    full_ver, major = _extract_chromium_ua_parts(browser_product)
+    plat = _platform_key()
+    if plat == "darwin":
+        ua_os = "Macintosh; Intel Mac OS X 10_15_7"
+        meta_platform = "macOS"
+        meta_platform_ver = "14.5.0"
+        nav_platform = "MacIntel"
+        arch = "arm"
+    elif plat == "linux":
+        ua_os = "X11; Linux x86_64"
+        meta_platform = "Linux"
+        meta_platform_ver = "6.8.0"
+        nav_platform = "Linux x86_64"
+        arch = "x86"
+    else:
+        ua_os = "Windows NT 10.0; Win64; x64"
+        meta_platform = "Windows"
+        meta_platform_ver = "15.0.0"
+        nav_platform = "Win32"
+        arch = "x86"
+
+    edge_suffix = f" Edg/{full_ver}" if browser_kind == "edge" else ""
+    ua = f"Mozilla/5.0 ({ua_os}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{full_ver} Safari/537.36{edge_suffix}"
+    primary_brand = "Microsoft Edge" if browser_kind == "edge" else "Google Chrome"
+    return {
+        "userAgent": ua,
+        "acceptLanguage": "en-US,en;q=0.9",
+        "platform": nav_platform,
+        "userAgentMetadata": {
+            "brands": [
+                {"brand": "Chromium", "version": major},
+                {"brand": "Not_A Brand", "version": "24"},
+                {"brand": primary_brand, "version": major},
+            ],
+            "fullVersionList": [
+                {"brand": "Chromium", "version": full_ver},
+                {"brand": "Not_A Brand", "version": "24.0.0.0"},
+                {"brand": primary_brand, "version": full_ver},
+            ],
+            "platform": meta_platform,
+            "platformVersion": meta_platform_ver,
+            "architecture": arch,
+            "model": "",
+            "mobile": False,
+            "bitness": "64",
+            "wow64": False,
+        },
+    }
+
+
+class _CDPTab:
+    def __init__(self, session: "_CDPSession", target_id: str, session_id: str):
+        self._session = session
+        self.target_id = target_id
+        self.session_id = session_id
+
+    async def navigate(self, url: str, timeout: float = 35.0):
+        await self._session._navigate_tab(self.session_id, url, timeout=timeout)
+
+    async def evaluate_dom(self, expr: str, timeout: float = 20.0):
+        return await self._session._evaluate_tab(self.session_id, expr, timeout=timeout)
+
+    async def click_point(self, x: float, y: float, timeout: float = 15.0):
+        await self._session._click_tab(self.session_id, x, y, timeout=timeout)
+
+    async def type_text(self, text: str, timeout: float = 20.0):
+        await self._session._type_tab(self.session_id, text, timeout=timeout)
+
+    async def type_text_keys(self, text: str, timeout: float = 30.0):
+        await self._session._type_tab_keys(self.session_id, text, timeout=timeout)
+
+    async def ping(self, timeout: float = 8.0) -> bool:
+        try:
+            return await self.evaluate_dom("1 + 1", timeout=timeout) == 2
+        except Exception:
+            return False
+
+    async def close(self):
+        await self._session.close_tab(self)
 
 
 class _CDPSession:
-    def __init__(self, ws_url: str, port: int, owns_process: bool, proc: subprocess.Popen | None):
+    def __init__(self, ws_url: str, port: int, owns_process: bool, proc: subprocess.Popen | None, cfg: dict | None = None):
         self.ws_url = ws_url
         self.port = port
         self.owns_process = owns_process
         self.proc = proc
+        self.cfg = cfg or {}
         self.ws = None
         self.target_id = None
         self.session_id = None
+        self.browser_version: str | None = None
         self._next_id = 1
+        self._pending: dict[int, asyncio.Future] = {}
+        self._crashed_sessions: set[str] = set()
+        self._reader_task: asyncio.Task | None = None
+        self._send_lock = asyncio.Lock()
 
-    async def _call(self, method: str, params: dict | None = None, session_id: str | None = None):
+    async def _handle_event(self, data: dict):
+        method = data.get("method")
+        sid = data.get("sessionId")
+        if method == "Page.javascriptDialogOpening" and sid:
+            asyncio.create_task(
+                self._fire_and_forget(
+                    "Page.handleJavaScriptDialog", {"accept": False}, session_id=sid
+                )
+            )
+        elif method in ("Target.targetCrashed", "Inspector.detached"):
+            if sid:
+                self._crashed_sessions.add(sid)
+
+    async def _fire_and_forget(self, method: str, params: dict | None = None, session_id: str | None = None):
+        try:
+            await self._call(method, params, session_id=session_id, timeout=5.0)
+        except Exception:
+            pass
+
+    async def _reader_loop(self):
+        try:
+            while self.ws is not None:
+                raw = await self.ws.recv()
+                data = json.loads(raw)
+                msg_id = data.get("id")
+                if msg_id is not None:
+                    fut = self._pending.pop(msg_id, None)
+                    if fut and not fut.done():
+                        fut.set_result(data)
+                elif "method" in data:
+                    await self._handle_event(data)
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            for fut in list(self._pending.values()):
+                if not fut.done():
+                    fut.set_exception(ConnectionError(f"CDP connection lost: {exc}"))
+            self._pending.clear()
+
+    async def _call(
+        self,
+        method: str,
+        params: dict | None = None,
+        session_id: str | None = None,
+        timeout: float = 30.0,
+    ):
+        if not self.ws:
+            raise ConnectionError("CDP WebSocket is not connected")
+        if session_id and session_id in self._crashed_sessions:
+            raise RuntimeError(f"CDP target crashed for session {session_id}")
         msg_id = self._next_id
         self._next_id += 1
         payload = {"id": msg_id, "method": method, "params": params or {}}
         if session_id:
             payload["sessionId"] = session_id
-        await self.ws.send(json.dumps(payload))
-        while True:
-            raw = await self.ws.recv()
-            data = json.loads(raw)
-            if data.get("id") == msg_id:
-                return data
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        self._pending[msg_id] = fut
+        try:
+            async with self._send_lock:
+                await self.ws.send(json.dumps(payload))
+            return await asyncio.wait_for(fut, timeout=timeout)
+        except Exception:
+            self._pending.pop(msg_id, None)
+            raise
+
+    async def _setup_tab_session(self, target_id: str) -> _CDPTab:
+        attached = await self._call(
+            "Target.attachToTarget",
+            {"targetId": target_id, "flatten": True},
+            timeout=15.0,
+        )
+        if "error" in attached:
+            raise RuntimeError(f"CDP attachToTarget failed: {attached}")
+        session_id = attached["result"]["sessionId"]
+        await self._call("Page.enable", {}, session_id, timeout=15.0)
+        await self._call("Runtime.enable", {}, session_id, timeout=15.0)
+        try:
+            await self._call("Target.activateTarget", {"targetId": target_id}, timeout=8.0)
+            await self._call("Page.bringToFront", {}, session_id, timeout=8.0)
+        except Exception:
+            pass
+        try:
+            ua_params = _build_ua_override_params(
+                self.browser_version, self.cfg.get("browser", "chrome")
+            )
+            await self._call("Emulation.setUserAgentOverride", ua_params, session_id, timeout=8.0)
+        except Exception:
+            pass
+        return _CDPTab(self, target_id, session_id)
 
     async def start(self):
         self.ws = await websockets.connect(
             self.ws_url,
             origin=f"http://127.0.0.1:{self.port}",
+            ping_interval=15,
+            ping_timeout=15,
+            close_timeout=4,
             max_size=16 * 1024 * 1024,
         )
+        self._reader_task = asyncio.create_task(self._reader_loop())
+        try:
+            ver = await self._call("Browser.getVersion", {}, timeout=8.0)
+            self.browser_version = ver.get("result", {}).get("product")
+        except Exception:
+            self.browser_version = None
+
+        # Prefer creating a foreground (background=False) tab or reusing initial about:blank
+        # so Edge/Brave never apply background-tab timer throttling or Sleeping Tabs.
+        reused_target_id = None
+        if self.owns_process:
+            try:
+                targets = await self._call("Target.getTargets", {}, timeout=8.0)
+                pages = [
+                    t
+                    for t in targets.get("result", {}).get("targetInfos", [])
+                    if t.get("type") == "page" and not t.get("attached")
+                ]
+                if pages:
+                    reused_target_id = pages[0]["targetId"]
+            except Exception:
+                reused_target_id = None
+
+        if reused_target_id:
+            tab = await self._setup_tab_session(reused_target_id)
+        else:
+            tab = await self.open_tab()
+        self.target_id = tab.target_id
+        self.session_id = tab.session_id
+
+    async def open_tab(self) -> _CDPTab:
         created = await self._call(
             "Target.createTarget",
-            {"url": "about:blank", "background": True},
+            {"url": "about:blank", "background": False},
+            timeout=15.0,
         )
         if "error" in created:
             raise RuntimeError(f"CDP Target.createTarget failed: {created}")
-        self.target_id = created["result"]["targetId"]
-        attached = await self._call(
-            "Target.attachToTarget",
-            {"targetId": self.target_id, "flatten": True},
-        )
-        self.session_id = attached["result"]["sessionId"]
-        await self._call("Page.enable", {}, self.session_id)
-        await self._call("Runtime.enable", {}, self.session_id)
+        tid = created["result"]["targetId"]
+        return await self._setup_tab_session(tid)
 
-    async def navigate(self, url: str):
-        res = await self._call("Page.navigate", {"url": url}, self.session_id)
-        if res.get("result", {}).get("errorText"):
-            raise RuntimeError(f"Navigation error: {res['result']['errorText']}")
-        for _ in range(30):
-            state = await self.evaluate_dom("document.readyState")
-            if state == "complete":
-                break
+    async def close_tab(self, tab: _CDPTab):
+        if tab and tab.target_id and self.ws:
+            try:
+                await self._call("Target.closeTarget", {"targetId": tab.target_id}, timeout=5.0)
+            except Exception:
+                pass
+
+    async def reset_tab(self):
+        old_target = self.target_id
+        new_tab = await self.open_tab()
+        self.target_id = new_tab.target_id
+        self.session_id = new_tab.session_id
+        if old_target and self.ws:
+            try:
+                await self._call("Target.closeTarget", {"targetId": old_target}, timeout=5.0)
+            except Exception:
+                pass
+
+    async def _navigate_tab(self, session_id: str, url: str, timeout: float = 35.0):
+        deadline = time.monotonic() + timeout
+        res = await self._call("Page.navigate", {"url": url}, session_id, timeout=min(25.0, timeout))
+        err_text = res.get("result", {}).get("errorText")
+        if err_text and err_text != "net::ERR_ABORTED":
+            raise RuntimeError(f"Navigation error: {err_text}")
+        while time.monotonic() < deadline:
+            try:
+                state = await self._evaluate_tab(session_id, "document.readyState", timeout=8.0)
+                if state == "complete":
+                    break
+            except Exception:
+                pass
             await asyncio.sleep(0.25)
 
-    async def evaluate_dom(self, expr: str):
+    async def navigate(self, url: str, timeout: float = 35.0):
+        await self._navigate_tab(self.session_id, url, timeout=timeout)
+
+    async def _evaluate_tab(self, session_id: str, expr: str, timeout: float = 20.0):
         res = await self._call(
             "Runtime.evaluate",
             {
@@ -982,7 +1463,8 @@ class _CDPSession:
                 "returnByValue": True,
                 "awaitPromise": False,
             },
-            self.session_id,
+            session_id,
+            timeout=timeout,
         )
         if "error" in res:
             raise RuntimeError(f"CDP Runtime.evaluate error: {res['error']}")
@@ -991,80 +1473,131 @@ class _CDPSession:
             raise RuntimeError(f"DOM exception: {r['exceptionDetails']}")
         return r.get("result", {}).get("value")
 
-    async def click_point(self, x: float, y: float):
+    async def evaluate_dom(self, expr: str, timeout: float = 20.0):
+        return await self._evaluate_tab(self.session_id, expr, timeout=timeout)
+
+    async def _click_tab(self, session_id: str, x: float, y: float, timeout: float = 15.0):
         px = float(round(x))
         py = float(round(y))
         await self._call(
             "Input.dispatchMouseEvent",
             {"type": "mousePressed", "x": px, "y": py, "button": "left", "clickCount": 1},
-            self.session_id,
+            session_id,
+            timeout=timeout,
         )
         await self._call(
             "Input.dispatchMouseEvent",
             {"type": "mouseReleased", "x": px, "y": py, "button": "left", "clickCount": 1},
-            self.session_id,
+            session_id,
+            timeout=timeout,
         )
 
-    async def type_text(self, text: str):
+    async def click_point(self, x: float, y: float, timeout: float = 15.0):
+        await self._click_tab(self.session_id, x, y, timeout=timeout)
+
+    async def _type_tab(self, session_id: str, text: str, timeout: float = 20.0):
+        parts = text.split("\n")
+        for idx, line in enumerate(parts):
+            if line:
+                await self._call("Input.insertText", {"text": line}, session_id, timeout=timeout)
+            if idx < len(parts) - 1:
+                await self._call(
+                    "Input.dispatchKeyEvent",
+                    {"type": "keyDown", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13},
+                    session_id,
+                    timeout=timeout,
+                )
+                await self._call(
+                    "Input.dispatchKeyEvent",
+                    {"type": "keyUp", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13},
+                    session_id,
+                    timeout=timeout,
+                )
+
+    async def _type_tab_keys(self, session_id: str, text: str, timeout: float = 30.0):
         for ch in text:
             if ch == "\n":
                 await self._call(
                     "Input.dispatchKeyEvent",
                     {"type": "keyDown", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13},
-                    self.session_id,
+                    session_id,
+                    timeout=timeout,
                 )
                 await self._call(
                     "Input.dispatchKeyEvent",
                     {"type": "keyUp", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13},
-                    self.session_id,
+                    session_id,
+                    timeout=timeout,
                 )
             elif ord(ch) < 128 and ch.isprintable():
                 await self._call(
                     "Input.dispatchKeyEvent",
                     {"type": "keyDown", "text": ch, "unmodifiedText": ch},
-                    self.session_id,
+                    session_id,
+                    timeout=timeout,
                 )
                 await self._call(
                     "Input.dispatchKeyEvent",
                     {"type": "keyUp", "text": ch},
-                    self.session_id,
+                    session_id,
+                    timeout=timeout,
                 )
             else:
-                await self._call("Input.insertText", {"text": ch}, self.session_id)
+                await self._call("Input.insertText", {"text": ch}, session_id, timeout=timeout)
+
+    async def type_text(self, text: str, timeout: float = 20.0):
+        await self._type_tab(self.session_id, text, timeout=timeout)
+
+    async def type_text_keys(self, text: str, timeout: float = 30.0):
+        await self._type_tab_keys(self.session_id, text, timeout=timeout)
+
+    async def ping(self, timeout: float = 8.0) -> bool:
+        try:
+            return await self.evaluate_dom("1 + 1", timeout=timeout) == 2
+        except Exception:
+            return False
 
     async def close(self):
         try:
-            if self.target_id and self.ws:
-                await self._call("Target.closeTarget", {"targetId": self.target_id})
+            if self.target_id and self.ws and not self.owns_process:
+                await self._call("Target.closeTarget", {"targetId": self.target_id}, timeout=3.0)
         except Exception:
             pass
         try:
             if self.owns_process and self.ws:
-                await self._call("Browser.close")
+                await self._call("Browser.close", timeout=3.0)
         except Exception:
             pass
+        if self._reader_task:
+            self._reader_task.cancel()
+            try:
+                await self._reader_task
+            except Exception:
+                pass
+            self._reader_task = None
         try:
             if self.ws:
-                await self.ws.close()
+                await asyncio.wait_for(self.ws.close(), timeout=3.0)
         except Exception:
             pass
-        if self.owns_process and self.proc:
-            try:
-                self.proc.wait(timeout=5)
-            except Exception:
-                self.proc.terminate()
+        self.ws = None
+        if self.owns_process:
+            _terminate_process_tree(self.proc)
 
 
-def _default_user_agent() -> str:
+def _default_user_agent(browser_kind: str = "chrome") -> str:
     plat = _platform_key()
     if plat == "darwin":
-        return "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
-    if plat == "linux":
-        return "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
-    return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+        os_tok = "Macintosh; Intel Mac OS X 10_15_7"
+    elif plat == "linux":
+        os_tok = "X11; Linux x86_64"
+    else:
+        os_tok = "Windows NT 10.0; Win64; x64"
+    edge_tok = " Edg/136.0.0.0" if browser_kind == "edge" else ""
+    return f"Mozilla/5.0 ({os_tok}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36{edge_tok}"
 
 
-def _start_headless_process(cfg: dict, port: int) -> tuple[subprocess.Popen, str]:
+def _start_headless_process(cfg: dict, port: int) -> tuple[subprocess.Popen | None, str]:
     exe = cfg["executable"]
     if not Path(exe).exists() and not shutil.which(exe):
         raise FileNotFoundError(f"Browser executable not found: {exe}")
@@ -1090,8 +1623,8 @@ def _start_headless_process(cfg: dict, port: int) -> tuple[subprocess.Popen, str
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        for _ in range(36):
-            time.sleep(0.5)
+        for _ in range(40):
+            time.sleep(0.4)
             probe = probe_bidi_port(port, timeout=1.0)
             if probe:
                 return proc, probe["ws_url"]
@@ -1100,24 +1633,58 @@ def _start_headless_process(cfg: dict, port: int) -> tuple[subprocess.Popen, str
                     f"Firefox headless exited early (code {proc.returncode}). "
                     f"Pastikan jendela login profil '{profile}' sudah ditutup sebelum menjalankan mode headless."
                 )
-        proc.terminate()
+        _terminate_process_tree(proc)
         raise RuntimeError(f"Timed out waiting for headless Firefox BiDi on port {port}")
 
     ud = Path(cfg["user_data_dir"])
     ud.mkdir(parents=True, exist_ok=True)
     pdir = cfg.get("profile_directory", "Default")
+    kind = cfg.get("browser", "chrome")
+    _tune_isolated_chromium_prefs(ud, kind, pdir)
+
+    # Clear stale DevToolsActivePort if nothing is actually listening on it
+    dt_port = read_devtools_active_port(ud)
+    if dt_port and not _is_port_open(dt_port):
+        try:
+            (ud / "DevToolsActivePort").unlink(missing_ok=True)
+        except OSError:
+            pass
+
     cmd = [
         exe,
         "--headless=new",
         "--disable-gpu",
         "--no-first-run",
         "--no-default-browser-check",
-        f"--user-agent={_default_user_agent()}",
+        "--disable-background-networking",
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
+        "--disable-background-mode",
+        "--disable-component-update",
+        "--disable-sync",
+        "--disable-default-apps",
+        "--no-service-autorun",
+        "--disable-hang-monitor",
+        "--metrics-recording-only",
+        "--no-pings",
+        "--window-size=1366,900",
+        "--disable-blink-features=AutomationControlled",
+        (
+            "--disable-features=CalculateNativeWinOcclusion,OptimizationHints,"
+            "MediaRouter,DialMediaRouteProvider,Translate,BackForwardCache,"
+            "IntensiveWakeUpThrottling,SleepingTabsOnBackground,msEdgeSleepingTabs,"
+            "msEdgeEfficiencyMode,BraveRewards,BraveWallet,BraveNews,BraveVPN,"
+            "BraveAIChat,BraveSpeedreader"
+        ),
+        f"--user-agent={_default_user_agent(kind)}",
         f"--user-data-dir={ud}",
         f"--profile-directory={pdir}",
         f"--remote-debugging-port={port}",
         f"--remote-allow-origins={origin}",
     ]
+    if kind == "edge":
+        cmd.append("--edge-skip-compat-layer-relaunch")
     if _platform_key() == "linux":
         cmd.append("--disable-dev-shm-usage")
     cmd.append("about:blank")
@@ -1127,17 +1694,24 @@ def _start_headless_process(cfg: dict, port: int) -> tuple[subprocess.Popen, str
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    for _ in range(36):
-        time.sleep(0.4)
-        probe = probe_cdp_port(port, timeout=1.0)
+    for _ in range(75):
+        time.sleep(0.25)
+        probe = probe_cdp_port(port, timeout=0.8)
         if probe:
             return proc, probe["ws_url"]
         if proc.poll() is not None:
+            # If handed off to an already running debug session on this isolated profile, attach cleanly.
+            existing_port = read_devtools_active_port(ud)
+            if existing_port:
+                existing_probe = probe_cdp_port(existing_port, timeout=0.8)
+                if existing_probe:
+                    return None, existing_probe["ws_url"]
             raise RuntimeError(
                 f"Browser headless exited early (code {proc.returncode}). "
-                f"Jika jendela login profil '{ud}' masih terbuka tanpa debug port, tutup dulu jendela login-nya."
+                f"Kemungkinan jendela login atau proses background {cfg.get('display', kind)} masih mengunci profil '{ud}'. "
+                f"Tutup penuh browser/tray icon profil tersebut lalu jalankan ulang."
             )
-    proc.terminate()
+    _terminate_process_tree(proc)
     raise RuntimeError(f"Timed out waiting for headless Chromium CDP on port {port}")
 
 
@@ -1153,14 +1727,15 @@ def open_headless_session(cfg: dict, port_override: int | None = None):
         if info["engine"] != engine:
             continue
         if engine == "bidi":
-            return _BiDiSession(info["ws_url"], info["port"], owns_process=False, proc=None)
-        return _CDPSession(info["ws_url"], info["port"], owns_process=False, proc=None)
+            return _BiDiSession(info["ws_url"], info["port"], owns_process=False, proc=None, cfg=cfg)
+        return _CDPSession(info["ws_url"], info["port"], owns_process=False, proc=None, cfg=cfg)
 
     port = find_free_port(int(pref_port) if pref_port else None)
     proc, ws_url = _start_headless_process(cfg, port)
+    owns_proc = proc is not None
     if engine == "bidi":
-        return _BiDiSession(ws_url, port, owns_process=True, proc=proc)
-    return _CDPSession(ws_url, port, owns_process=True, proc=proc)
+        return _BiDiSession(ws_url, port, owns_process=owns_proc, proc=proc, cfg=cfg)
+    return _CDPSession(ws_url, port, owns_process=owns_proc, proc=proc, cfg=cfg)
 
 
 # ============================================================================
@@ -1301,20 +1876,15 @@ def detect_and_confirm_account(
 
 def cmd_connect(args):
     kind = args.browser.lower()
-    if kind == "auto":
-        ff = resolve_browser_exe("firefox")
-        ff_profiles = {p["name"].lower() for p in list_firefox_profiles()}
-        selected = None
-        if ff and "raid" in ff_profiles:
-            selected = "firefox"
-        else:
-            for cand in ("brave", "chrome", "edge", "firefox"):
-                if resolve_browser_exe(cand):
-                    selected = cand
-                    break
+    if kind == "ask":
+        kind = prompt_browser_choice()
+        if kind == "custom" and not args.exe_path:
+            args.exe_path = input("Masukkan path executable browser custom (atau .app di macOS): ").strip().strip('"')
+    elif kind == "auto":
+        selected = choose_auto_browser()
         if not selected:
             raise FileNotFoundError(
-                "Tidak ada browser (Firefox/Brave/Chrome/Edge) yang terdeteksi di perangkat ini. "
+                "Tidak ada browser (Chrome/Firefox/Edge/Brave) yang terdeteksi di perangkat ini. "
                 "Install salah satu browser atau pakai --browser custom --exe-path <path>."
             )
         kind = selected
@@ -1329,7 +1899,7 @@ def cmd_connect(args):
         display = custom_path.stem
     else:
         if kind not in BROWSER_META:
-            raise ValueError(f"Browser tidak dikenal: {kind}. Pilih: auto, firefox, brave, chrome, edge, custom")
+            raise ValueError(f"Browser tidak dikenal: {kind}. Pilih: auto, ask, chrome, edge, brave, firefox, custom")
         meta = BROWSER_META[kind]
         exe = resolve_browser_exe(kind, args.exe_path)
         if not exe:
@@ -1356,8 +1926,10 @@ def cmd_connect(args):
     else:
         ud = Path(args.user_data_dir) if args.user_data_dir else (agent_profiles_root() / f"{kind}-{sanitize_slug(profile)}")
         ud.mkdir(parents=True, exist_ok=True)
+        pdir = args.profile_directory or "Default"
+        _tune_isolated_chromium_prefs(ud, kind, pdir)
         cfg["user_data_dir"] = str(ud.resolve())
-        cfg["profile_directory"] = args.profile_directory or "Default"
+        cfg["profile_directory"] = pdir
 
     cfg_path = Path(args.config)
     cfg_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -1414,7 +1986,7 @@ def main():
     sub.add_parser("list-browsers", help="Detect installed browsers, isolated workspace profiles, and configured ports")
 
     p_conn = sub.add_parser("connect", help="Connect chosen browser, create isolated profile & shortcut, and detect X user")
-    p_conn.add_argument("--browser", default="auto", help="auto | firefox | brave | chrome | edge | custom")
+    p_conn.add_argument("--browser", default="auto", help="auto | ask | chrome | edge | brave | firefox | custom")
     p_conn.add_argument("--profile", default=None, help="Profile name (default: Raid for Firefox, Agent for Chromium)")
     p_conn.add_argument("--exe-path", default=None, help="Custom browser executable path")
     p_conn.add_argument("--engine", default=None, choices=["cdp", "bidi"], help="Engine when --browser custom")

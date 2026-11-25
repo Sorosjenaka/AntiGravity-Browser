@@ -16,3 +16,5 @@ __pycache__/
 .venv/
 scratch/
 *.log
+/custom_prompt.md
+/custom_prompt.txt

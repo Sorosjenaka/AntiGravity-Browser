@@ -24,17 +24,18 @@ Buka **PowerShell** di folder kerja kamu, lalu jalankan:
 git clone https://github.com/Sorosjenaka/AntiGravity-Browser.git
 cd AntiGravity-Browser
 
-# Pilih browser otomatis, atau tentukan langsung:
-.\setup.ps1 -Browser auto
+# Interaktif: tawarkan pilih browser (Chrome/Edge/Brave/Firefox/Custom) + pilih prompt & sampel output
+.\setup.ps1
 ```
 
-Jika ingin langsung memilih browser favorit kamu:
+Atau tentukan langsung lewat parameter CLI:
 
 ```powershell
-.\setup.ps1 -Browser brave -Profile Agent
-.\setup.ps1 -Browser chrome -Profile Agent
+.\setup.ps1 -Browser chrome -Profile Agent -PromptMode default
 .\setup.ps1 -Browser edge -Profile Agent
+.\setup.ps1 -Browser brave -Profile Agent
 .\setup.ps1 -Browser firefox -Profile Raid
+.\setup.ps1 -Browser chrome -PromptMode custom -PromptFile .\custom_prompt.md
 
 # Atau browser Chromium custom lain:
 .\setup.ps1 -Browser custom -ExePath "C:\Path\ke\browser.exe" -Profile Agent
@@ -49,9 +50,10 @@ Yang otomatis dikerjakan `setup.ps1`:
 - Mengetes & compile CLI Rust ke `.\target\release\x-social-draft-workflow.exe`
 - Memastikan modul Python `websockets` tersedia
 - Membuat database lokal `history.sqlite3`
-- Menghubungkan browser pilihan ke profil terisolasi (`~\AppData\Local\AntiGravity-Browser\profiles\...` untuk Chromium, atau profil `-P` untuk Firefox) dengan origin debug ketat (`http://127.0.0.1:<port>`)
+- Menampilkan daftar browser terpasang dan **menawarkan kamu memilih browser** (`Chrome`, `Edge`, `Brave`, `Firefox`, `Custom`) ke profil terisolasi dengan anti-throttling penuh & origin debug ketat (`http://127.0.0.1:<port>`)
 - Membuat **Shortcut Desktop Windows (`.lnk`)** langsung dengan format standar Shell Link (`MS-SHLLINK`) di Desktop & folder `shortcuts/`
 - Mendeteksi akun X aktif di mode headless
+- **Menawarkan pilihan prompt** (prompt custom kamu vs `reply_prompt.md`), menampilkan **3 sampel output** dalam tabel, dan mengizinkan kamu menambah **penegasan logika** (`--append-rule`) sebelum mulai bekerja
 
 ---
 

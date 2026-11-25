@@ -3,8 +3,8 @@
 Follow the workspace guide in [AGENTS.md](AGENTS.md) and `.agents/skills/x-social-browser-workflow/SKILL.md`.
 
 Key workspace conventions:
-1. Respond to the user in **Indonesian (Bahasa Indonesia)** clearly and concisely without unnecessary follow-up questions.
-2. Always write X reply drafts in **English (`en`)** with **7–9 words**, including `project_short`, and **zero question marks (`?`/`？`), emojis, quotation marks, or em/en dashes**.
-3. Support **any number of X links** supplied by the user (`--urls` or `--urls-file`) and run `engage_posts.py` with the default **randomized 5–60 second delay** between posts.
-4. Connect any user-selected browser (`firefox`, `brave`, `chrome`, `edge`, `custom`) cross-platform (Windows, Linux/VPS headless, macOS) using an **isolated workspace profile directory**, OS launcher (`.lnk`/`.desktop`/`.command`/`.sh`), and headless execution without disturbing the user's personal desktop browser.
-5. If local browser execution is unavailable in the current runtime, output validated drafts and `data/action_plan.json` so the user can run `.\run-plan.ps1` (Windows) or `./run-plan.sh` (Linux/VPS/macOS).
+1. Respond to the user in **Indonesian (Bahasa Indonesia)** clearly and concisely.
+2. **Offer browser choice first:** Run `list-browsers` and ask the user which browser they want (`chrome`, `edge`, `brave`, `firefox`, or `custom`) before running `connect-browser` (do not force Brave silently).
+3. **Offer prompt choice + sample output gate:** Ask whether the user wants their own custom prompt (`set-prompt --file / --text / --append-rule`) or the repo default (`reply_prompt.md`, `set-prompt --default`). Show 3 sample outputs in a Markdown table and confirm whether they match, need fixes, or need extra logic clarifications before proceeding.
+4. Support **any number of X links** (`read_posts.py --concurrency 3`) and run `engage_posts.py` with default **randomized 5–60s pacing**, fault recovery, and **strict parallel post-completion verification** (`verify_work.py` + `x-social-draft-workflow audit --strict` + `report` Markdown tables).
+5. Browser automation uses only isolated workspace profiles (`AntiGravity-Browser/profiles/` or named Firefox profile) in **headless anti-throttled mode** over localhost (`127.0.0.1`) with strict `--remote-allow-origins=http://127.0.0.1:<port>`. If local execution is restricted, export `data/action_plan.json` for `.\run-plan.ps1` / `./run-plan.sh`.

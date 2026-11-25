@@ -30,6 +30,81 @@ pub struct SaveDraftsResult {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PromptPolicy {
+    #[serde(default = "default_prompt_language")]
+    pub language: String,
+    #[serde(default = "default_min_words")]
+    pub min_words: usize,
+    #[serde(default = "default_max_words")]
+    pub max_words: usize,
+    #[serde(default = "default_true")]
+    pub require_project_short: bool,
+    #[serde(default)]
+    pub allow_questions: bool,
+    #[serde(default)]
+    pub allow_forbidden_symbols: bool,
+}
+
+fn default_prompt_language() -> String {
+    "en".to_owned()
+}
+
+fn default_min_words() -> usize {
+    7
+}
+
+fn default_max_words() -> usize {
+    9
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for PromptPolicy {
+    fn default() -> Self {
+        Self {
+            language: default_prompt_language(),
+            min_words: default_min_words(),
+            max_words: default_max_words(),
+            require_project_short: true,
+            allow_questions: false,
+            allow_forbidden_symbols: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PromptState {
+    pub source: String,
+    pub prompt_text: String,
+    pub policy: PromptPolicy,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AuditItemResult {
+    pub status_id: String,
+    pub post_id: Option<i64>,
+    pub url: String,
+    pub read_ok: bool,
+    pub drafts_count: i64,
+    pub has_recommended_draft: bool,
+    pub reply_status: String,
+    pub like_status: String,
+    pub complete: bool,
+    pub issues: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AuditReport {
+    pub total_expected: usize,
+    pub complete_count: usize,
+    pub incomplete_count: usize,
+    pub all_complete: bool,
+    pub items: Vec<AuditItemResult>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct StatusSummary {
     pub integrity: String,
@@ -37,6 +112,7 @@ pub struct StatusSummary {
     pub account_confirmed: bool,
     pub browser_label: Option<String>,
     pub dedicated_browser_designated: bool,
+    pub prompt_source: String,
     pub posts: i64,
     pub drafts: i64,
     pub recorded_replies: i64,
@@ -79,9 +155,39 @@ pub fn initialize_schema(connection: &Connection) -> Result<()> {
         )?;
     }
     connection.execute(
-        "INSERT INTO workflow_config (key, value) VALUES ('reply_prompt', ?1) \
+        "INSERT INTO workflow_config (key, value) VALUES ('default_reply_prompt', ?1) \
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
         [include_str!("../reply_prompt.md")],
+    )?;
+    connection.execute(
+        "INSERT INTO workflow_config (key, value) VALUES ('prompt_source', 'repo_default') \
+         ON CONFLICT(key) DO NOTHING",
+        [],
+    )?;
+    let prompt_source: String = connection
+        .query_row(
+            "SELECT value FROM workflow_config WHERE key = 'prompt_source'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or_else(|_| "repo_default".to_owned());
+    if prompt_source == "repo_default" {
+        connection.execute(
+            "INSERT INTO workflow_config (key, value) VALUES ('reply_prompt', ?1) \
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
+            [include_str!("../reply_prompt.md")],
+        )?;
+    } else {
+        connection.execute(
+            "INSERT INTO workflow_config (key, value) VALUES ('reply_prompt', ?1) \
+             ON CONFLICT(key) DO NOTHING",
+            [include_str!("../reply_prompt.md")],
+        )?;
+    }
+    connection.execute(
+        "INSERT INTO workflow_config (key, value) VALUES ('prompt_policy', ?1) \
+         ON CONFLICT(key) DO NOTHING",
+        [serde_json::to_string(&PromptPolicy::default())?],
     )?;
     Ok(())
 }
@@ -284,7 +390,7 @@ pub fn add_post(
     Ok(post_id)
 }
 
-fn validate_draft_set(draft_set: &DraftSetInput) -> Result<Vec<String>> {
+fn validate_draft_set(draft_set: &DraftSetInput, policy: &PromptPolicy) -> Result<Vec<String>> {
     if draft_set.options.len() != 3 {
         bail!("exactly three draft options are required");
     }
@@ -292,20 +398,26 @@ fn validate_draft_set(draft_set: &DraftSetInput) -> Result<Vec<String>> {
         bail!("recommended_option must be 1, 2, or 3");
     }
     let project = draft_set.project_short.trim();
-    if project.is_empty() || project.contains('@') || project.contains('_') {
+    if policy.require_project_short && (project.is_empty() || project.contains('@') || project.contains('_')) {
         bail!("provide the short project name without @ or underscores");
     }
     let normalized_project = normalize_reply(project);
-    if normalized_project.is_empty() {
+    if policy.require_project_short && normalized_project.is_empty() {
         bail!("project name has no searchable characters");
     }
     let language = draft_set.language.trim().to_lowercase();
     if language.is_empty() {
         bail!("language is required");
     }
-    let language_key = language.split('-').next().unwrap_or("und");
-    if !language_key.eq_ignore_ascii_case("en") {
-        bail!("drafts must be written in English (en), even when the post is in another language");
+    let expected_lang = policy.language.trim().to_lowercase();
+    if !expected_lang.is_empty() && expected_lang != "any" {
+        let language_key = language.split('-').next().unwrap_or("und");
+        let expected_key = expected_lang.split('-').next().unwrap_or("en");
+        if !language_key.eq_ignore_ascii_case(expected_key) {
+            bail!(
+                "drafts must be written in {expected_lang}, even when the post is in another language"
+            );
+        }
     }
     let warnings = Vec::new();
 
@@ -322,19 +434,23 @@ fn validate_draft_set(draft_set: &DraftSetInput) -> Result<Vec<String>> {
         if !(1..=5).contains(&option.stars) {
             bail!("option {option_no} star score must be between 1 and 5");
         }
-        if text.chars().any(is_forbidden_symbol) {
+        if !policy.allow_forbidden_symbols && text.chars().any(is_forbidden_symbol) {
             bail!("option {option_no} contains a forbidden quote, dash, or emoji");
         }
-        if text.contains('?') || text.contains('？') {
+        if !policy.allow_questions && (text.contains('?') || text.contains('？')) {
             bail!("option {option_no} must not contain a question mark");
         }
         let normalized = normalize_reply(text);
-        if !normalized.contains(&normalized_project) {
+        if policy.require_project_short && !normalized.contains(&normalized_project) {
             bail!("option {option_no} does not include project name {project}");
         }
         let words = text.split_whitespace().count();
-        if !(7..=9).contains(&words) {
-            bail!("option {option_no} has {words} whitespace-separated words; expected 7–9");
+        if words < policy.min_words || words > policy.max_words {
+            bail!(
+                "option {option_no} has {words} whitespace-separated words; expected {}–{}",
+                policy.min_words,
+                policy.max_words
+            );
         }
         if !seen.insert(normalized) {
             bail!("the three draft options contain a duplicate");
@@ -402,7 +518,8 @@ pub fn save_drafts(
     post_id: i64,
     draft_set: &DraftSetInput,
 ) -> Result<SaveDraftsResult> {
-    let warnings = validate_draft_set(draft_set)?;
+    let policy = load_prompt_policy(connection)?;
+    let warnings = validate_draft_set(draft_set, &policy)?;
     let active_handle = require_ready_account(connection)?;
     let (post_handle, _post_language, post_exists): (String, String, bool) = connection.query_row(
         "SELECT account_handle, COALESCE(language, 'und'), \
@@ -593,6 +710,14 @@ pub fn status_summary(connection: &Connection) -> Result<StatusSummary> {
     } else {
         (false, browser_label.is_some())
     };
+    let prompt_source: String = connection
+        .query_row(
+            "SELECT value FROM workflow_config WHERE key = 'prompt_source'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?
+        .unwrap_or_else(|| "repo_default".to_owned());
     let count = |table: &str| -> Result<i64> {
         Ok(
             connection.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
@@ -606,10 +731,114 @@ pub fn status_summary(connection: &Connection) -> Result<StatusSummary> {
         account_confirmed,
         browser_label,
         dedicated_browser_designated: browser_designated,
+        prompt_source,
         posts: count("posts")?,
         drafts: count("reply_drafts")?,
         recorded_replies: count("posted_replies")?,
     })
+}
+
+pub fn load_prompt_policy(connection: &Connection) -> Result<PromptPolicy> {
+    let raw: Option<String> = connection
+        .query_row(
+            "SELECT value FROM workflow_config WHERE key = 'prompt_policy'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    match raw {
+        Some(text) if !text.trim().is_empty() => {
+            serde_json::from_str(&text).context("parsing stored prompt_policy JSON")
+        }
+        _ => Ok(PromptPolicy::default()),
+    }
+}
+
+pub fn prompt_state(connection: &Connection) -> Result<PromptState> {
+    let source = connection
+        .query_row(
+            "SELECT value FROM workflow_config WHERE key = 'prompt_source'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?
+        .unwrap_or_else(|| "repo_default".to_owned());
+    let prompt_text = stored_prompt(connection)?;
+    let policy = load_prompt_policy(connection)?;
+    Ok(PromptState {
+        source,
+        prompt_text,
+        policy,
+    })
+}
+
+pub fn set_prompt(
+    connection: &Connection,
+    use_default: bool,
+    custom_text: Option<&str>,
+    policy: Option<&PromptPolicy>,
+) -> Result<PromptState> {
+    if use_default {
+        let default_text = include_str!("../reply_prompt.md");
+        set_config(connection, "prompt_source", "repo_default")?;
+        set_config(connection, "reply_prompt", default_text)?;
+        let default_policy = policy.cloned().unwrap_or_default();
+        set_config(
+            connection,
+            "prompt_policy",
+            &serde_json::to_string(&default_policy)?,
+        )?;
+        record_event(
+            connection,
+            "prompt_configured",
+            "Active prompt set to repository default (reply_prompt.md).",
+        )?;
+        return prompt_state(connection);
+    }
+
+    let text = custom_text
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow!("custom prompt text cannot be empty"))?;
+    set_config(connection, "prompt_source", "user_custom")?;
+    set_config(connection, "reply_prompt", text)?;
+    if let Some(pol) = policy {
+        if pol.min_words == 0 || pol.max_words < pol.min_words {
+            bail!(
+                "invalid word range in prompt policy: {}..={}",
+                pol.min_words,
+                pol.max_words
+            );
+        }
+        set_config(connection, "prompt_policy", &serde_json::to_string(pol)?)?;
+    }
+    record_event(
+        connection,
+        "prompt_configured",
+        "Active prompt updated to user custom prompt.",
+    )?;
+    prompt_state(connection)
+}
+
+pub fn append_prompt_rule(connection: &Connection, rule_text: &str) -> Result<PromptState> {
+    let addition = rule_text.trim();
+    if addition.is_empty() {
+        bail!("clarification / rule text cannot be empty");
+    }
+    let current = stored_prompt(connection)?;
+    let updated = format!(
+        "{}\n\n## User Logic Clarification / Penegasan Tambahan\n- {}\n",
+        current.trim_end(),
+        addition
+    );
+    set_config(connection, "prompt_source", "user_custom")?;
+    set_config(connection, "reply_prompt", &updated)?;
+    record_event(
+        connection,
+        "prompt_rule_appended",
+        &format!("Appended user logic clarification rule ({} chars).", addition.len()),
+    )?;
+    prompt_state(connection)
 }
 
 pub fn stored_prompt(connection: &Connection) -> Result<String> {
@@ -621,6 +850,174 @@ pub fn stored_prompt(connection: &Connection) -> Result<String> {
         )
         .optional()?
         .ok_or_else(|| anyhow!("reply prompt is missing from workflow_config"))
+}
+
+pub fn audit_completeness(connection: &Connection, expected_urls: &[String]) -> Result<AuditReport> {
+    let mut target_items: Vec<(String, String)> = Vec::new();
+    let mut seen_ids = HashSet::new();
+
+    if expected_urls.is_empty() {
+        let mut stmt = connection.prepare(
+            "SELECT COALESCE(status_id, ''), x_url FROM posts ORDER BY id",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for (sid, url) in rows {
+            let clean_sid = if sid.is_empty() {
+                extract_status_id(&url).unwrap_or_else(|_| url.clone())
+            } else {
+                sid
+            };
+            if seen_ids.insert(clean_sid.clone()) {
+                target_items.push((clean_sid, url));
+            }
+        }
+    } else {
+        for raw_url in expected_urls {
+            let trimmed = raw_url.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            let sid = extract_status_id(trimmed)?;
+            if seen_ids.insert(sid.clone()) {
+                target_items.push((sid, trimmed.to_owned()));
+            }
+        }
+    }
+
+    let mut items = Vec::with_capacity(target_items.len());
+    let mut complete_count = 0usize;
+
+    for (sid, url) in target_items {
+        let row: Option<(i64, String, String, String, String)> = connection
+            .query_row(
+                "SELECT p.id, p.x_url, p.read_status, \
+                 COALESCE(e.reply_manual_status, 'not_confirmed'), \
+                 COALESCE(e.like_manual_status, 'not_confirmed') \
+                 FROM posts p \
+                 LEFT JOIN engagement_status e ON e.post_id = p.id \
+                 WHERE p.status_id = ?1 OR p.x_url = ?2 \
+                 LIMIT 1",
+                params![sid, format!("https://x.com/i/status/{sid}")],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .optional()?;
+
+        if let Some((post_id, canonical_url, read_status, reply_status, like_status)) = row {
+            let drafts_count: i64 = connection.query_row(
+                "SELECT COUNT(*) FROM reply_drafts WHERE post_id = ?1",
+                [post_id],
+                |r| r.get(0),
+            )?;
+            let has_recommended_draft: bool = connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM reply_drafts WHERE post_id = ?1 AND recommended = 1)",
+                [post_id],
+                |r| r.get(0),
+            )?;
+            let read_ok = read_status == "read";
+            let mut issues = Vec::new();
+            if !read_ok {
+                issues.push(format!("read_status={read_status}"));
+            }
+            if drafts_count != 3 {
+                issues.push(format!("drafts_count={drafts_count} (expected 3)"));
+            }
+            if !has_recommended_draft {
+                issues.push("missing_recommended_draft".to_owned());
+            }
+            if reply_status != "user_posted" {
+                issues.push(format!("reply={reply_status}"));
+            }
+            if like_status != "user_liked" {
+                issues.push(format!("like={like_status}"));
+            }
+            let complete = issues.is_empty();
+            if complete {
+                complete_count += 1;
+            }
+            items.push(AuditItemResult {
+                status_id: sid,
+                post_id: Some(post_id),
+                url: canonical_url,
+                read_ok,
+                drafts_count,
+                has_recommended_draft,
+                reply_status,
+                like_status,
+                complete,
+                issues,
+            });
+        } else {
+            items.push(AuditItemResult {
+                status_id: sid,
+                post_id: None,
+                url,
+                read_ok: false,
+                drafts_count: 0,
+                has_recommended_draft: false,
+                reply_status: "missing".to_owned(),
+                like_status: "missing".to_owned(),
+                complete: false,
+                issues: vec!["not_recorded_in_db".to_owned()],
+            });
+        }
+    }
+
+    let total_expected = items.len();
+    let incomplete_count = total_expected.saturating_sub(complete_count);
+    Ok(AuditReport {
+        total_expected,
+        complete_count,
+        incomplete_count,
+        all_complete: total_expected > 0 && incomplete_count == 0,
+        items,
+    })
+}
+
+pub fn audit_report_markdown(report: &AuditReport) -> String {
+    let mut out = String::from(
+        "| # | Status ID | Post ID | URL | Read | Drafts | Reply | Like | Status | Notes |\n|---:|---|---:|---|---|---:|---|---|---|---|\n",
+    );
+    if report.items.is_empty() {
+        out.push_str("| — | — | — | — | false | 0 | missing | missing | INCOMPLETE | No items found |\n");
+    } else {
+        for (idx, item) in report.items.iter().enumerate() {
+            let pid = item
+                .post_id
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "—".to_owned());
+            let verdict = if item.complete { "PASS" } else { "MISSING/FAIL" };
+            let notes = if item.issues.is_empty() {
+                "complete".to_owned()
+            } else {
+                item.issues.join(", ")
+            };
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+                idx + 1,
+                markdown_cell(&item.status_id),
+                pid,
+                markdown_cell(&item.url),
+                if item.read_ok { "ok" } else { "no" },
+                item.drafts_count,
+                markdown_cell(&item.reply_status),
+                markdown_cell(&item.like_status),
+                verdict,
+                markdown_cell(&notes),
+            ));
+        }
+    }
+    out.push_str(&format!(
+        "\nAudit summary: {}/{} complete, {} incomplete/missing. Verdict: {}.\n",
+        report.complete_count,
+        report.total_expected,
+        report.incomplete_count,
+        if report.all_complete { "PASS" } else { "FAIL" }
+    ));
+    out
 }
 
 pub fn report_markdown(connection: &Connection) -> Result<String> {
@@ -650,10 +1047,15 @@ pub fn report_markdown(connection: &Connection) -> Result<String> {
         .collect::<rusqlite::Result<Vec<_>>>()?;
     drop(statement);
 
+    let total_posts = post_rows.len();
+    let mut completed_posts = 0usize;
     if post_rows.is_empty() {
         output.push_str("| — | — | — | 0 | — | not_confirmed | not_confirmed |\n");
     }
     for (id, url, read, draft_count, reply, like) in post_rows {
+        if read == "read" && draft_count == 3 && reply == "user_posted" && like == "user_liked" {
+            completed_posts += 1;
+        }
         let mut draft_statement = connection.prepare(
             "SELECT option_no, text, reply_probability, stars, recommended \
              FROM reply_drafts WHERE post_id = ?1 ORDER BY option_no",
@@ -702,7 +1104,7 @@ pub fn report_markdown(connection: &Connection) -> Result<String> {
     let recorded: i64 =
         connection.query_row("SELECT COUNT(*) FROM posted_replies", [], |row| row.get(0))?;
     output.push_str(&format!(
-        "\nDB duplicate-check history: {recorded} recorded replies. Checks cover recorded normalized text only.\n"
+        "\nCompletion summary: {completed_posts}/{total_posts} posts fully completed (read + 3 drafts + user_posted + user_liked).\nDB duplicate-check history: {recorded} recorded replies. Checks cover recorded normalized text only.\n"
     ));
     Ok(output)
 }
