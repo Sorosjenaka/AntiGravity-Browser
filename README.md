@@ -74,17 +74,19 @@ Saat `setup.ps1` / `setup.sh` dijalankan tanpa flag, installer otomatis menawark
    ```text
    Install, load, dan cek semua setup workspace ini sampai 100% siap kerja.
    ```
-3. Agent memverifikasi binary, profil browser terisolasi, launcher, dan akun X kamu secara otomatis.
-4. Setelah itu, kamu **tinggal kirim daftar link X** dalam jumlah berapa pun.
+3. Agent mengecek browser terpasang (`list-browsers`) dan **menawarkan kamu memilih browser apa yang mau dipakai** (`Chrome`, `Edge`, `Brave`, `Firefox`, atau `Custom`).
+4. Agent **menawarkan pilihan prompt** (pakai prompt custom kamu sendiri atau prompt bawaan repo `reply_prompt.md`), lalu menampilkan **3 sampel output** dalam tabel agar kamu bisa mengecek kesesuaian, memperbaiki, atau menambahkan **penegasan logika** (`--append-rule`) sebelum kerja dimulai.
+5. Setelah dikonfirmasi, kamu **tinggal kirim daftar link X** dalam jumlah berapa pun — agent membaca secara paralel, menjalankan Like + Reply dengan jeda acak `5–60` detik (tahan error & auto-recovery), lalu menutup pekerjaan dengan **verifikasi paralel lintas tab + tabel audit & laporan Markdown lengkap**.
 
 ---
 
 ## 3. Aturan Komunikasi, Draf X & Keamanan Publik
 
 - **Bahasa obrolan dengan user:** Agent berbicara pakai **Bahasa Indonesia** yang jelas dan langsung ke inti.
-- **Komentar di X selalu Bahasa Inggris (`en`):** Meskipun postingan target berbahasa Indonesia atau bahasa lain, draf balasan X ditulis dalam **Bahasa Inggris natural** (`7–9` kata, menyebut nama pendek project).
-- **Tanpa tanda tanya di komentar X:** `?` / `？` ditolak otomatis oleh [`validate_draft_set`](src/lib.rs). Tidak memakai emoji, tanda kutip, atau dash (`—` / `–`).
-- **Privasi aman dipakai publik:** [.gitignore](.gitignore) otomatis mengecualikan `history.sqlite3`, `browser_config.json`, `shortcuts/`, `*.lnk`, `*.desktop`, `*.command`, `.venv/`, `target/`, `data/*.txt`, dan `data/*.json` agar akun, sesi, maupun data pribadi tidak pernah ikut ter-push ke GitHub.
+- **Aturan draf mengikuti prompt aktif (`repo_default` vs `user_custom`):**
+  - Jika memakai **prompt bawaan repo (`reply_prompt.md`)**: komentar X selalu ditulis dalam **Bahasa Inggris natural (`en`)**, `7–9` kata, menyebut `project_short`, serta bebas tanda tanya (`?`/`？`), emoji, tanda kutip, dan dash (`—`/`–`) yang divalidasi ketat oleh [`validate_draft_set`](src/lib.rs).
+  - Jika memakai **prompt custom kamu sendiri (`set-prompt`)**: prompt & kebijakan validasi (`--language`, `--min-words`, `--max-words`, `--allow-questions`, `--no-project-short`, `--append-rule`) tersimpan permanen di SQLite dan tidak ditimpa ulang oleh CLI.
+- **Privasi aman dipakai publik:** [.gitignore](.gitignore) otomatis mengecualikan `history.sqlite3`, `browser_config.json`, `custom_prompt.md`, `shortcuts/`, `*.lnk`, `*.desktop`, `*.command`, `.venv/`, `target/`, `data/*.txt`, dan `data/*.json` agar akun, sesi, prompt pribadi, maupun data lokal tidak pernah ikut ter-push ke GitHub.
 
 ---
 
@@ -94,10 +96,10 @@ Sebagian AI assistant memiliki kebijakan internal yang hanya mengizinkan pembuat
 
 1. Minta agent tersebut membuatkan draf balasan tervalidasi (`data/action_plan.json`).
 2. Jalankan 1 perintah eksekutor lokal di perangkat kamu sendiri:
-   - **Windows:** `.\run-plan.ps1`
-   - **Linux / VPS / macOS:** `./run-plan.sh`
+   - **Windows:** `.\run-plan.ps1` (tambah `-Strict` bila ingin exit non-zero jika ada yang gagal)
+   - **Linux / VPS / macOS:** `./run-plan.sh` (set `STRICT=1` bila ingin mode ketat)
 
-   Script ini mengeksekusi `data/action_plan.json` secara lokal dengan **jeda acak 5–60 detik** pada profil terisolasi kamu, menyimpan status ke SQLite, dan menampilkan tabel `report` akhir.
+   Script ini mengeksekusi `data/action_plan.json` secara lokal dengan **jeda acak 5–60 detik** + auto-retry pada profil terisolasi kamu, otomatis menjalankan **verifikasi paralel lintas tab (`verify_work.py`) + auto-repair**, menyinkronkan SQLite, lalu mencetak **tabel Audit Ketat (`audit`) dan tabel `report` akhir**.
 
 ---
 
